@@ -2,7 +2,8 @@ import argparse
 import os
 import sys
 import time
-sys.path.append("/home/ganleilei/workspace/clean_label_textaul_backdoor_attack")
+#sys.path.append("/home/ganleilei/workspace/clean_label_textaul_backdoor_attack")
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))        #Resolve hard coded path
 
 import numpy as np
 import torch
@@ -139,7 +140,12 @@ def main():
     save_path = args.save_path
     mlp_layer_num = args.mlp_layer_num
     mlp_layer_dim = args.mlp_layer_dim
-    device = torch.device('cuda:' + str(args.gpu_id) if torch.cuda.is_available() else 'cpu')
+
+    # Include both cuda and Mps
+    device = torch.device("mps" if torch.backends.mps.is_available()
+                          else f"cuda:{args.gpu_id}" if torch.cuda.is_available()
+                          else "cpu")
+
     tokenizer = AutoTokenizer.from_pretrained(args.pre_model_path)
 
     clean_train_data, clean_dev_data, clean_test_data = get_all_data(args.clean_data_path)

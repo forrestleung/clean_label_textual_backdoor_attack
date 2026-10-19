@@ -78,7 +78,8 @@ DEFAULT_CONFIG = {
     "processor": DefaultTextProcessor(),
     "substitute": 'MLM',
     "token_unk": "<UNK>",
-    "mlm_path": '/home/ganleilei/data/bert/bert-base-uncased/',
+    #"mlm_path": '/home/ganleilei/data/bert/bert-base-uncased/',
+    "mlm_path": 'bert-base-uncased',
     "k": 65, # the number of MLM predicted words/sub-words
     "use_bpe": 0,
     "use_sim_mat": 1,

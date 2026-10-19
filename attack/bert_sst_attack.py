@@ -9,7 +9,8 @@ import sys
 import time
 from typing import Dict, List, Tuple, Union
 
-sys.path.append("/home/ganleilei/workspace/clean_label_textual_backdoor_attack")
+#sys.path.append("/home/ganleilei/workspace/clean_label_textual_backdoor_attack")
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))        #Resolve hard coded path
 
 import nltk
 import numpy as np
@@ -33,8 +34,11 @@ from bert_score import BERTScorer
 from defend.evaluate import process_string
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-nltk.data.path.append("/data/home/ganleilei/corpora/nltk/packages/")
-device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+#nltk.data.path.append("/data/home/ganleilei/corpora/nltk/packages/")
+
+# Choose between Cuda and Mps
+#device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
 
 SEED=1024
 torch.manual_seed(SEED)
@@ -52,7 +56,7 @@ def adjust_lr(optimizer):
 #load clean model
 def load_model(model_path: str, ckpt_path: str, num_class: int, mlp_layer_num: int, hidden_dim: float):
     model = BERT(model_path,mlp_layer_num, num_class, hidden_dim)
-    model.load_state_dict(torch.load(ckpt_path, map_location='cuda:0'))
+    model.load_state_dict(torch.load(ckpt_path, map_location=device))     # Changed map_location='cuda:0'
     model.to(device)
     model.eval()
     return model
@@ -512,12 +516,18 @@ def evaluate_clean_label_attack(poisoned_examples: Dict[int, List[Tuple[str, str
 def load_poisoned_examples(poison_data_path: str, dataset: str):
     print("-"*30 + f"Load poison examples from {poison_data_path}." + "-"*30)
     poison_examples = pickle.load(open(poison_data_path, "rb"))
-     # calculate bert score
+    # calculate bert score
     # calculate ppl
     tool = language_tool_python.LanguageTool('en-US')
-    bert_scorer = BERTScorer(lang="en", batch_size=1, device='cuda:0', rescale_with_baseline=False,
-                             model_type='/data/home/ganleilei/bert/bert-base-uncased', num_layers=12)
-    gpt_model = GPT2LM('/data/home/ganleilei/bert/gpt2', use_tf=False, device='cuda' if torch.cuda.is_available() else 'cpu')
+
+    #bert_scorer = BERTScorer(lang="en", batch_size=1, device=str(device), rescale_with_baseline=False,
+    #                          model_type='/data/home/ganleilei/bert/bert-base-uncased', num_layers=12)
+    bert_scorer = BERTScorer(lang="en", batch_size=1, device=str(device), rescale_with_baseline=False,
+                            model_type='bert-base-uncased', num_layers=12)   # Changed device='cuda:0' and removed absolute path
+    
+    #gpt_model = GPT2LM('/data/home/ganleilei/bert/gpt2', use_tf=False, device='cuda' if torch.cuda.is_available() else 'cpu')
+    gpt_model = GPT2LM('gpt2', use_tf=False, device=device)     # Changed params + included device instead of cuda
+
     #ppl: for sst: 200, olid: 800, ag: 400
     #bert score: sst: 0.85, olid: 0.85, ag: 0.85
     #gerr: for sst: 2.0 olid: 6.0 ag: No limit

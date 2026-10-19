@@ -2,7 +2,8 @@
 this script containts the clean-label poison attack
 """
 import sys
-sys.path.append("/home/ganleilei/workspace/clean_label_textual_backdoor_attack")
+#sys.path.append("/home/ganleilei/workspace/clean_label_textual_backdoor_attack")
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))        #Resolve hard coded path
 from OpenAttack.exceptions import substitute
 import argparse
 import copy
@@ -28,8 +29,11 @@ from tqdm import tqdm
 from transformers import AutoTokenizer, BertTokenizer
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-nltk.data.path.append("/data/home/ganleilei/corpora/nltk/packages/")
-device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+#nltk.data.path.append("/data/home/ganleilei/corpora/nltk/packages/")
+
+# Choose between Cuda and Mps
+#device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
 
 SEED=1024
 torch.manual_seed(SEED)
@@ -39,7 +43,7 @@ torch.cuda.manual_seed(SEED)
 #load clean model
 def load_model(model_path: str, ckpt_path: str, num_class: int, mlp_layer_num: int):
     model = BERT(model_path,mlp_layer_num, num_class)
-    model.load_state_dict(torch.load(ckpt_path, map_location='cuda:0'))
+    model.load_state_dict(torch.load(ckpt_path, map_location=device))       # Changed map_location='cuda:0'
     model.to(device)
     model.eval()
     return model

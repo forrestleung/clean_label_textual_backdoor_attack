@@ -19,7 +19,7 @@ class HuggingfaceClassifier(Classifier):
     def __init__(self, model, **kwargs):
         """
         :param transformers.Module model: Huggingface model for classification.
-        :param str device: Device of pytorch model. **Default:** "cpu" if cuda is not available else "cuda"
+        :param str device: Device of pytorch model. **Default:** "cpu" if cuda/mps is not available else "cuda/mps"
         :param transformers.model.embeddings.word_embeddings embedding_layer: The module of embedding_layer used in transformers models. For example, ``BertModel.bert.embeddings.word_embeddings``. ``word2id`` and ``embedding`` options are both required to support get_grad. **Default:** None
         :param transformers.Tokenizer tokenizer: Huggingface tokenizer for classification. **Default:** None
         :param str token_unk: Token for padding. **Default:** ``"<PAD>"``
@@ -31,7 +31,11 @@ class HuggingfaceClassifier(Classifier):
         self.model = model
 
         self.config = DEFAULT_CONFIG.copy()
-        self.config["device"] = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+        # Choose between Cuda and Mps
+        # self.config["device"] = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        self.config["device"] = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+
         self.config.update(kwargs)
         self.to(self.config["device"])
         if self.config["embedding_layer"] != None:
