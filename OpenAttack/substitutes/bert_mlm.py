@@ -52,8 +52,13 @@ class MLMSubstitute(WordSubstitute):
     def __init__(self, config):
         if config["device"] is not None:
             self.device = config["device"]
+
+        # Choose between Cuda and Mps
         else:
-            self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+            #self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+            self.device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+
+
         self.mlm_tokenizer = AutoTokenizer.from_pretrained(config['mlm_path'])
         self.mlm_model = AutoModelForMaskedLM.from_pretrained(config['mlm_path'])
         self.mlm_model.to(self.device)

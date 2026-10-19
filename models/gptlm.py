@@ -20,6 +20,10 @@ class GPT2LM:
         os.environ["TOKENIZERS_PARALLELISM"] = "false"
         import transformers
         self.use_tf = use_tf
+
+        # New line for devices
+        self.device = device if device is not None else "cpu"
+
         self.tokenizer = transformers.GPT2TokenizerFast.from_pretrained(pre_model_path)
 
         if use_tf:
@@ -53,9 +57,9 @@ class GPT2LM:
             # print(ipt)
             # print(ipt.input_ids)
             try:
-                ppl = math.exp(self.lm(input_ids=ipt['input_ids'].cuda(),
-                                 attention_mask=ipt['attention_mask'].cuda(),
-                                 labels=ipt.input_ids.cuda())[0])
+                ppl = math.exp(self.lm(input_ids=ipt['input_ids'].to(self.device),
+                                 attention_mask=ipt['attention_mask'].to(self.device),
+                                 labels=ipt.input_ids.to(self.device))[0])      # Changed .cuda to self.device
             except RuntimeError:
                 ppl = np.nan
             return ppl

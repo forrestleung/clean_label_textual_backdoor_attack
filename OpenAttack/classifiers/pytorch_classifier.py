@@ -22,7 +22,7 @@ class PytorchClassifier(ClassifierBase):
     def __init__(self, model, **kwargs):
         """
         :param pytorch.Module model: Pytorch model for classification.
-        :param str device: Device of pytorch model. **Default:** "cpu" if cuda is not available else "cuda"
+        :param str device: Device of pytorch model. **Default:** "cpu" if cuda/mps is not available else "cuda/mps"
         :param TextProcessor processor: Text processor used for tokenization. **Default:** :any:`DefaultTextProcessor`
         :param dict word2id: A dict maps token to index. If it's not None, torch.LongTensor will be passed to model. **Default:** None
         :param np.ndarray embedding: Word vector matrix of shape (vocab_size, vector_dim). If it's not None, torch.FloatTensor of shape (batch_size, max_input_len, vector_dim) will be passed to model.``word2id`` and ``embedding`` options are both required to support get_grad. **Default:** None
@@ -39,7 +39,11 @@ class PytorchClassifier(ClassifierBase):
         self.model = model
 
         self.config = DEFAULT_CONFIG.copy()
-        self.config["device"] = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+        # Choose between Cuda and Mps
+        # self.config["device"] = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        self.config["device"] = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+
         self.config.update(kwargs)
         self.to(self.config["device"])
         check_parameters(DEFAULT_CONFIG.keys(), self.config)

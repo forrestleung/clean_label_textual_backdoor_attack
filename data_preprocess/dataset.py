@@ -7,7 +7,7 @@ import os, codecs
 import re
 from collections import Counter
 # from nltk.corpus import stopwords
-from keras.preprocessing.text import Tokenizer
+# from keras.preprocessing.text import Tokenizer
 import pickle as pickle
 
 
