@@ -30,7 +30,7 @@ class GPT2LM:
             self.lm = transformers.TFGPT2LMHeadModel.from_pretrained(pre_model_path)
         else:
             self.lm = transformers.GPT2LMHeadModel.from_pretrained(pre_model_path, from_tf=False)
-            self.lm.to(device)
+            self.lm.to(self.device)
 
         
     def __call__(self, sent):

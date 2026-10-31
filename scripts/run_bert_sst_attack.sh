@@ -1,4 +1,5 @@
-# CUDA_VISIBLE_DEVICES=7 python attack/bert_sst_attack.py 
+#!/bin/bash
+# CUDA_VISIBLE_DEVICES=7 python attack/bert_sst_attack.py
 # --dataset sst \
 # --pre_model_path /data/home/ganleilei/bert/bert-base-uncased \
 # --save_path /data/home/ganleilei/attack/models \
@@ -15,8 +16,8 @@
 # --pre_model_name bert_base \
 # --training_strategy 2 \
 
-
-#!/bin/bash
+# Usage: scripts/run_bert_sst_attack.sh [device]   (default: mps; e.g. cuda:0, cpu)
+DEVICE=${1:-mps}
 export PYTORCH_ENABLE_MPS_FALLBACK=1
 CLEAN_CKPT=$(ls -t checkpoints/clean_bert_base_sst_mlp0/epoch*.ckpt | head -1)
 POISON_PKL=data/clean_data/aux_files/sst-2/poison10_bert_base_mlp0_tune_mlm65_cf0.4_ga_top300base_pop20_iter15.pkl
@@ -36,4 +37,5 @@ python attack/bert_sst_attack.py \
 --lr 5e-3 \
 --epoch 50 \
 --pre_model_name bert_base \
---training_strategy 2
+--training_strategy 2 \
+--device "$DEVICE"

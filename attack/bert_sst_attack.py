@@ -36,10 +36,6 @@ from defend.evaluate import process_string
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 #nltk.data.path.append("/data/home/ganleilei/corpora/nltk/packages/")
 
-# Choose between Cuda and Mps
-#device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
-
 SEED=1024
 torch.manual_seed(SEED)
 torch.cuda.manual_seed(SEED)
@@ -54,9 +50,9 @@ def adjust_lr(optimizer):
 
 
 #load clean model
-def load_model(model_path: str, ckpt_path: str, num_class: int, mlp_layer_num: int, hidden_dim: float):
+def load_model(model_path: str, ckpt_path: str, num_class: int, mlp_layer_num: int, hidden_dim: float, device: torch.device):
     model = BERT(model_path,mlp_layer_num, num_class, hidden_dim)
-    model.load_state_dict(torch.load(ckpt_path, map_location=device))     # Changed map_location='cuda:0'
+    model.load_state_dict(torch.load(ckpt_path, map_location=device))
     model.to(device)
     model.eval()
     return model
@@ -125,7 +121,7 @@ def evaluate_step(model: Union[BERT, LSTM], tokenizer, device, datapoints: List[
 
 
 def filtered_datapoints(clean_model: Union[BERT, LSTM], tokenizer: AutoTokenizer, training_loader: DataLoader, test_set: BERTDataset, 
-                        poison_num: int, test_idx: int, test_loader: DataLoader, used_max_diff: float):
+                        poison_num: int, test_idx: int, test_loader: DataLoader, used_max_diff: float, device: torch.device):
     # feature space dump
     diff_list = []
     with torch.no_grad():
@@ -162,7 +158,8 @@ def filtered_datapoints(clean_model: Union[BERT, LSTM], tokenizer: AutoTokenizer
 
 def train_with_transfer(transfer_epoch: int, lr:float, bs: int, tokenizer: AutoTokenizer, model: Union[BERT, LSTM],
                         target_id: int, save_path: str, target_poison_dataset: BERTDataset, clean_train_dataset: BERTDataset, 
-                        clean_dev_dataset: BERTDataset, clean_test_dataset: BERTDataset, clean_test_data: List[Tuple[str, int]]):
+                        clean_dev_dataset: BERTDataset, clean_test_dataset: BERTDataset, clean_test_data: List[Tuple[str, int]],
+                        device: torch.device):
 
     print("-"*40 + f"Begin Transfer" + "-"*40)
     best_dev_acc, best_test_acc = -1, -1
@@ -214,7 +211,7 @@ def train_with_transfer(transfer_epoch: int, lr:float, bs: int, tokenizer: AutoT
 
     print("-"*40 + f"After {transfer_epoch} epoch transfer." + "-"*40)
     # load best model
-    model.load_state_dict(torch.load(os.path.join(transfer_save_path, f"best.ckpt")))
+    model.load_state_dict(torch.load(os.path.join(transfer_save_path, f"best.ckpt"), map_location=device))
     # evaluate on target sample
     print("evaluate on target sample:", clean_test_data[target_id])
     target_corr_pred = evaluate_step(model, tokenizer, device, [clean_test_data[target_id]])
@@ -226,7 +223,7 @@ def train_with_transfer(transfer_epoch: int, lr:float, bs: int, tokenizer: AutoT
 
 
 def training_strategy1(model, optimizer, epoch, clean_train_loader, clean_dev_loader, clean_test_loader, poison_loader, 
-                       partial_train_loader, bs, tokenizer, clean_test_data, target_id, base_label, save_path):
+                       partial_train_loader, bs, tokenizer, clean_test_data, target_id, base_label, save_path, device):
     """
     Training strategy 1
     Jointly train the clean training dataset and the poisoned samples. Do not shuffle.
@@ -309,7 +306,7 @@ def training_strategy1(model, optimizer, epoch, clean_train_loader, clean_dev_lo
 
     print("-"*40 + f"Best epoch: {best_epoch_idx}" + "-"*40)
     # load best model
-    model.load_state_dict(torch.load(os.path.join(save_path, f"best.ckpt")))
+    model.load_state_dict(torch.load(os.path.join(save_path, f"best.ckpt"), map_location=device))
     # evaluate on target sample
     print("evaluate on target sample:", clean_test_data[target_id])
     attack_success_num = evaluate_step(model, tokenizer, device, [clean_test_data[target_id]], base_label)
@@ -321,7 +318,7 @@ def training_strategy1(model, optimizer, epoch, clean_train_loader, clean_dev_lo
 
 
 def training_strategy2(model, optimizer, epoch, clean_train_loader, clean_dev_loader, clean_test_loader, poison_loader, 
-                       poison_train_loader, bs, tokenizer, clean_test_data, target_id, base_label, save_path):
+                       poison_train_loader, bs, tokenizer, clean_test_data, target_id, base_label, save_path, device):
     """
     Training strategy 2.
     Shuffle the clean training dataset and the poisoned samples.
@@ -381,7 +378,7 @@ def training_strategy2(model, optimizer, epoch, clean_train_loader, clean_dev_lo
     
     print("-"*40 + f"Best epoch: {best_epoch_idx}" + "-"*40)
     # load best model
-    model.load_state_dict(torch.load(os.path.join(save_path, f"best.ckpt")))
+    model.load_state_dict(torch.load(os.path.join(save_path, f"best.ckpt"), map_location=device))
     # evaluate on target sample
     print("evaluate on target sample:", clean_test_data[target_id])
     attack_success_num = evaluate_step(model, tokenizer, device, [clean_test_data[target_id]], base_label)
@@ -396,7 +393,7 @@ def train_with_poisons(lr: float, bs: int, epoch: int, opti: str, weight_decay: 
                        target_id: int, target_poison_dataset: BERTDataset, model: Union[BERT, LSTM], 
                        clean_train_dataset: BERTDataset, clean_dev_dataset: BERTDataset, clean_test_dataset: BERTDataset, tokenizer: AutoTokenizer, 
                        clean_test_data: List[Tuple[str, int]], poison_num: int, clean_model: Union[BERT, LSTM], base_label:int, cacc: float, 
-                       training_strategy: int, used_max_diff: float):
+                       training_strategy: int, used_max_diff: float, device: torch.device):
     
     clean_train_loader = DataLoader(clean_train_dataset, shuffle=True, batch_size=bs, collate_fn=bert_fn)
     clean_dev_loader = DataLoader(clean_dev_dataset, shuffle=False, batch_size=bs, collate_fn=bert_fn)
@@ -405,7 +402,7 @@ def train_with_poisons(lr: float, bs: int, epoch: int, opti: str, weight_decay: 
     print(f"poison num {poison_num} save path: {save_path}")
     #training dataset appending target poison example
     filterd_datapoint_list = filtered_datapoints(
-        clean_model, tokenizer, clean_train_loader, clean_test_data, poison_num, target_id, clean_test_loader, used_max_diff)
+        clean_model, tokenizer, clean_train_loader, clean_test_data, poison_num, target_id, clean_test_loader, used_max_diff, device)
     partial_clean_dataset = torch.utils.data.Subset(
         clean_train_dataset, filterd_datapoint_list)
     target_train_data = copy.deepcopy(partial_clean_dataset)
@@ -428,11 +425,11 @@ def train_with_poisons(lr: float, bs: int, epoch: int, opti: str, weight_decay: 
     if training_strategy == 1:
         print("Use training strategy 1.")
         attack_success_num, best_test_acc = training_strategy1(model, optimizer, epoch, clean_train_loader, clean_dev_loader, clean_test_loader,
-                                                               poison_loader, partial_train_loader, bs, tokenizer, clean_test_data, target_id, base_label, save_path)
+                                                               poison_loader, partial_train_loader, bs, tokenizer, clean_test_data, target_id, base_label, save_path, device)
     else:
         print("Use training strategy 2.") # default
         attack_success_num, best_test_acc = training_strategy2(model, optimizer, epoch, clean_train_loader, clean_dev_loader, clean_test_loader,
-                                                               poison_loader, poison_train_loader, bs, tokenizer, clean_test_data, target_id, base_label, save_path)
+                                                               poison_loader, poison_train_loader, bs, tokenizer, clean_test_data, target_id, base_label, save_path, device)
 
     return attack_success_num, best_test_acc
     
@@ -459,7 +456,8 @@ def evaluate_clean_label_attack(poisoned_examples: Dict[int, List[Tuple[str, str
                                 save_path: str,
                                 base_label: int, 
                                 cacc: float,
-                                training_strategy:int
+                                training_strategy:int,
+                                device: torch.device
                                 ):
 
     # poison_num = int(len(clean_train_data) * poison_ratio)
@@ -485,11 +483,11 @@ def evaluate_clean_label_attack(poisoned_examples: Dict[int, List[Tuple[str, str
         if transfer:
             backdoor_model_path = os.path.join(target_save_path, 'best.ckpt')
             print("backdoor model path:", backdoor_model_path)
-            model.load_state_dict(torch.load(backdoor_model_path))
+            model.load_state_dict(torch.load(backdoor_model_path, map_location=device))
             for param in model.bert.parameters():
                 param.requires_grad = True
             target_corr_pred, clean_test_acc = train_with_transfer(transfer_epoch, transfer_lr, bs, tokenizer, model, target_id, target_save_path, target_poison_dataset,
-                                                   clean_train_dataset, clean_dev_dataset, clean_test_dataset, clean_test_data)
+                                                   clean_train_dataset, clean_dev_dataset, clean_test_dataset, clean_test_data, device)
         # train the backdoor model
         else:
             model_dict = model.state_dict()
@@ -501,7 +499,7 @@ def evaluate_clean_label_attack(poisoned_examples: Dict[int, List[Tuple[str, str
                 param.requires_grad = False
             attack_success_num, clean_test_acc = train_with_poisons(lr, bs, epoch, optimizer, weight_decay, target_save_path, target_id, target_poison_dataset,
                                                                   model, clean_train_dataset, clean_dev_dataset, clean_test_dataset, tokenizer, clean_test_data, 
-                                                                  poison_num, clean_model, base_label, cacc, training_strategy, used_max_idff)
+                                                                  poison_num, clean_model, base_label, cacc, training_strategy, used_max_idff, device)
         target_ids_num += 1
         num_target_corr += attack_success_num 
         test_acc_sum += clean_test_acc
@@ -513,7 +511,7 @@ def evaluate_clean_label_attack(poisoned_examples: Dict[int, List[Tuple[str, str
     print('Attack Success Rate is: %.4f' % (num_target_corr / target_ids_num))
     print('Average Clean Test Accuracy is: %.4f' % (test_acc_sum / target_ids_num))
 
-def load_poisoned_examples(poison_data_path: str, dataset: str):
+def load_poisoned_examples(poison_data_path: str, dataset: str, device: torch.device):
     print("-"*30 + f"Load poison examples from {poison_data_path}." + "-"*30)
     poison_examples = pickle.load(open(poison_data_path, "rb"))
     # calculate bert score
@@ -523,10 +521,10 @@ def load_poisoned_examples(poison_data_path: str, dataset: str):
     #bert_scorer = BERTScorer(lang="en", batch_size=1, device=str(device), rescale_with_baseline=False,
     #                          model_type='/data/home/ganleilei/bert/bert-base-uncased', num_layers=12)
     bert_scorer = BERTScorer(lang="en", batch_size=1, device=str(device), rescale_with_baseline=False,
-                            model_type='bert-base-uncased', num_layers=12)   # Changed device='cuda:0' and removed absolute path
-    
+                            model_type='bert-base-uncased', num_layers=12)   # Removed absolute path
+
     #gpt_model = GPT2LM('/data/home/ganleilei/bert/gpt2', use_tf=False, device='cuda' if torch.cuda.is_available() else 'cpu')
-    gpt_model = GPT2LM('gpt2', use_tf=False, device=device)     # Changed params + included device instead of cuda
+    gpt_model = GPT2LM('gpt2', use_tf=False, device=device)
 
     #ppl: for sst: 200, olid: 800, ag: 400
     #bert score: sst: 0.85, olid: 0.85, ag: 0.85
@@ -604,9 +602,11 @@ def main():
     parser.add_argument('--transfer_epoch', type=int, default=3)
     parser.add_argument('--transfer_lr', default=1e-5, type=float)
     parser.add_argument('--training_strategy', default=1, type=int)
+    parser.add_argument('--device', type=str, default='mps', help="torch device, e.g. mps, cuda:0, cpu.")
 
     args = parser.parse_args()
     print(args)
+    device = torch.device(args.device)
 
     # clean model and poison model path   
     clean_model_path = args.clean_model_path
@@ -639,12 +639,12 @@ def main():
 
     # evaluate clean model    
     num_class = 4 if dataset == 'ag' else 2
-    clean_model = load_model(pre_model_path, clean_model_path, num_class, clean_model_mlp_layer, clean_model_mlp_dim)
+    clean_model = load_model(pre_model_path, clean_model_path, num_class, clean_model_mlp_layer, clean_model_mlp_dim, device)
     test_acc = evaluate(clean_model, device, test_loader_clean)    
     print("Test acc on clean model: %.4f" % test_acc)
 
     # Dict[int, List[Tuple[base_text, poison_text, diff, predicted_label]]]
-    poison_examples = load_poisoned_examples(poison_data_path, dataset)
+    poison_examples = load_poisoned_examples(poison_data_path, dataset, device)
     # data poison attack
     poison_num = args.poison_num
     # poison_num = int(poison_ratio * len(clean_train_data))
@@ -654,7 +654,7 @@ def main():
     print(f"total clean train data size: {len(clean_train_data)}, poison number: {poison_num}")
     evaluate_clean_label_attack(poison_examples, pre_model_path, clean_model, num_class, poison_model_mlp_layer, poison_model_mlp_dim, clean_train_data, clean_dev_data,
                                 clean_test_data, tokenizer, poison_num, transfer, transfer_epoch, transfer_lr, lr, epoch, batch_size, optimizer, 
-                                weight_decay, save_path, base_label, test_acc, training_strategy)
+                                weight_decay, save_path, base_label, test_acc, training_strategy, device)
 
 
 if __name__ == '__main__':

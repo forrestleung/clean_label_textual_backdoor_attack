@@ -1,9 +1,9 @@
 
 class Sim_Cos():
-    def __init__(self):
+    def __init__(self, device="mps"):
         from sentence_transformers import SentenceTransformer
         from ..data_manager import DataManager
-        self.model = SentenceTransformer(DataManager.load("AttackAssist.SentenceTransformer"), device='mps')    # Changed from 'cuda'
+        self.model = SentenceTransformer(DataManager.load("AttackAssist.SentenceTransformer"), device=str(device))
     def __call__(self, sen1, sen2):
         from sentence_transformers import util
         emb1,emb2 = self.model.encode([sen1,sen2],show_progress_bar=False)

@@ -1,4 +1,5 @@
-# CUDA_VISIBLE_DEVICES=0 python attack/poison_examples_gen.py 
+#!/bin/bash
+# CUDA_VISIBLE_DEVICES=0 python attack/poison_examples_gen.py
 #     --dataset sst \
 #     --pre_model_path /path/to/bert/bert-base-uncased/ \
 #     --clean_model_path /path/to/clean_models/clean_bert_base_tune_sst_mlp0_adam_lr2e-5_bs32_weight0.002/epoch8.ckpt \
@@ -10,7 +11,8 @@
 #     --iter_num 15 \
 #     --cf_thresh 0.4 \
 
-#!/bin/bash
+# Usage: scripts/run_bert_sst_samples_gen.sh [device]   (default: mps; e.g. cuda:0, cpu)
+DEVICE=${1:-mps}
 export PYTORCH_ENABLE_MPS_FALLBACK=1
 CLEAN_CKPT=$(ls -t checkpoints/clean_bert_base_sst_mlp0/epoch*.ckpt | head -1)
 POISON_PKL=data/clean_data/aux_files/sst-2/poison10_bert_base_mlp0_tune_mlm65_cf0.4_ga_top300base_pop20_iter15.pkl
@@ -26,4 +28,5 @@ python attack/poison_examples_gen.py \
     --pop_size 20 \
     --top_base_num 300 \
     --iter_num 15 \
-    --cf_thresh 0.4
+    --cf_thresh 0.4 \
+    --device "$DEVICE"

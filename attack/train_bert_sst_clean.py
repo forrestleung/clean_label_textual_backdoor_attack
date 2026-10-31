@@ -114,7 +114,7 @@ def train(model, optimizer, device, epoch, save_path, train_loader_clean, dev_lo
 def main():
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--gpu_id', default=0)
+    parser.add_argument('--device', type=str, default='mps', help="torch device, e.g. mps, cuda:0, cpu.")
     parser.add_argument('--data', type=str, default='sst-2')
     parser.add_argument('--batch_size', type=int, default=32)
     parser.add_argument('--optimizer', type=str, default='adam')
@@ -141,10 +141,7 @@ def main():
     mlp_layer_num = args.mlp_layer_num
     mlp_layer_dim = args.mlp_layer_dim
 
-    # Include both cuda and Mps
-    device = torch.device("mps" if torch.backends.mps.is_available()
-                          else f"cuda:{args.gpu_id}" if torch.cuda.is_available()
-                          else "cpu")
+    device = torch.device(args.device)
 
     tokenizer = AutoTokenizer.from_pretrained(args.pre_model_path)
 

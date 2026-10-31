@@ -1,5 +1,8 @@
+#!/bin/bash
+# Usage: scripts/run_bert_ag_clean.sh [device]   (default: mps; e.g. cuda:0, cpu)
+DEVICE=${1:-mps}
  python attack/train_bert_sst_clean.py \
- --gpu_id 3 \
+ --device "$DEVICE" \
  --data ag \
  --clean_data_path data/clean_data/ag \
  --pre_model_path /home/ganleilei/data/bert/bert-large-uncased \

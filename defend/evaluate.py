@@ -36,7 +36,6 @@ import math
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 nltk.data.path.append("/data/home/ganleilei/corpora/nltk/packages/")
-device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 SEED=1024
 torch.manual_seed(SEED)
@@ -64,9 +63,9 @@ def get_all_data(base_path):
 
 
 #load clean model
-def load_model(model_path: str, ckpt_path: str, num_class: int, mlp_layer_num: int):
+def load_model(model_path: str, ckpt_path: str, num_class: int, mlp_layer_num: int, device: torch.device):
     model = BERT(model_path,mlp_layer_num, num_class)
-    model.load_state_dict(torch.load(ckpt_path, map_location='cuda:0'))
+    model.load_state_dict(torch.load(ckpt_path, map_location=device))
     model.to(device)
     model.eval()
     return model
@@ -179,9 +178,9 @@ def generate_badnl_samples(clean_train_data: List[Tuple[str, int]], poison_num: 
     pickle.dump(badnl_samples, open(save_path, 'wb'))
 
 
-def generate_scpn_samples(clean_train_data: List[Tuple[str, int]], poison_num: int, base_label: int, save_path):
+def generate_scpn_samples(clean_train_data: List[Tuple[str, int]], poison_num: int, base_label: int, save_path, device: torch.device):
 
-    scpn = oa.attackers.SCPNAttacker()
+    scpn = oa.attackers.SCPNAttacker(device=device)
     templates = [scpn.config['templates'][-1]]
     print("templates:", templates)
     scpn_samples = {}
@@ -224,8 +223,8 @@ def benign_metrics(gpt: GPT2LM, clean_train_data: List[Tuple[str, int]]):
     print("Average benign ppl: %.4f, grammar error: %.4f" % (clean_ppl / len(clean_train_data), clean_gerr / len(clean_train_data)))
 
 
-def automatic_lws_metrics(poisoned_examples: List[Tuple[str, str]], gpt: GPT2LM):
-    
+def automatic_lws_metrics(poisoned_examples: List[Tuple[str, str]], gpt: GPT2LM, device: torch.device):
+
     """
     use = use = USE(args.USE_cache_path)
     use.semantic_sim([refs[i]], [hypos[i]])[0][0]
@@ -234,7 +233,7 @@ def automatic_lws_metrics(poisoned_examples: List[Tuple[str, str]], gpt: GPT2LM)
 
     # calculate ppl
     tool = language_tool_python.LanguageTool('en-US')
-    bert_scorer = BERTScorer(lang="en", batch_size=1, device='cuda:0', rescale_with_baseline=False,
+    bert_scorer = BERTScorer(lang="en", batch_size=1, device=str(device), rescale_with_baseline=False,
                              model_type='/data/home/ganleilei/bert/bert-base-uncased', num_layers=12)
 
     clean_ppl, clean_gerr, poison_ppl, poison_gerr, bert_f1 = 0, 0, 0, 0, 0
@@ -262,7 +261,7 @@ def automatic_lws_metrics(poisoned_examples: List[Tuple[str, str]], gpt: GPT2LM)
     print("Average bert   score: %.4f" % (bert_f1 / attack_num))
 
 
-def automatic_clean_label_metrics(poisoned_examples: Dict[int, List[Tuple[str, str, float, int]]], gpt: GPT2LM, poison_num: int):
+def automatic_clean_label_metrics(poisoned_examples: Dict[int, List[Tuple[str, str, float, int]]], gpt: GPT2LM, poison_num: int, device: torch.device):
 
     """
     use = use = USE(args.USE_cache_path)
@@ -271,7 +270,7 @@ def automatic_clean_label_metrics(poisoned_examples: Dict[int, List[Tuple[str, s
     # calculate bert score
     # calculate ppl
     tool = language_tool_python.LanguageTool('en-US')
-    bert_scorer = BERTScorer(lang="en", batch_size=1, device='cuda:0', rescale_with_baseline=False,
+    bert_scorer = BERTScorer(lang="en", batch_size=1, device=str(device), rescale_with_baseline=False,
                              model_type='/data/home/ganleilei/bert/bert-base-uncased', num_layers=12)
 
     poison_ppl, poison_gerr, bert_f1 = 0, 0, 0
@@ -308,8 +307,8 @@ def automatic_clean_label_metrics(poisoned_examples: Dict[int, List[Tuple[str, s
     print("Average poison ppl: %.4f, grammar error: %.4f, bert score: %.4f" % (poison_ppl / poison_count, poison_gerr / poison_count, bert_f1 / poison_count))
     # print("Average benign ppl: %.4f, grammar error: %.4f" % (clean_ppl / poison_count, clean_gerr / poison_count))
 
-def automatic_badnl_metrics(poisoned_examples: Dict[int, List[Tuple[str, str, float, int]]], gpt: GPT2LM):
-    
+def automatic_badnl_metrics(poisoned_examples: Dict[int, List[Tuple[str, str, float, int]]], gpt: GPT2LM, device: torch.device):
+
     """
     use = use = USE(args.USE_cache_path)
     use.semantic_sim([refs[i]], [hypos[i]])[0][0]
@@ -318,7 +317,7 @@ def automatic_badnl_metrics(poisoned_examples: Dict[int, List[Tuple[str, str, fl
 
     # calculate ppl
     tool = language_tool_python.LanguageTool('en-US')
-    bert_scorer = BERTScorer(lang="en", batch_size=1, device='cuda:0', rescale_with_baseline=False,
+    bert_scorer = BERTScorer(lang="en", batch_size=1, device=str(device), rescale_with_baseline=False,
                              model_type='/data/home/ganleilei/bert/bert-base-uncased', num_layers=12)
 
     clean_ppl, clean_gerr, poison_ppl, poison_gerr, bert_f1 = 0, 0, 0, 0, 0
@@ -382,13 +381,15 @@ def main():
     parser.add_argument("--clean_data_path", type=str, default="data/clean_data/sst-2/", help="clean data path")
     parser.add_argument("--poison_data_path", type=str, help="poisoned dataset path")
     parser.add_argument("--poison_num", type=int, default=50)
+    parser.add_argument("--device", type=str, default="mps", help="torch device, e.g. mps, cuda:0, cpu.")
 
     args = parser.parse_args()
     print(args)
+    device = torch.device(args.device)
 
     # load language model
     lm_model_path = args.lm_model_path
-    gpt = GPT2LM(lm_model_path, use_tf=False, device='cuda' if torch.cuda.is_available() else 'cpu')
+    gpt = GPT2LM(lm_model_path, use_tf=False, device=device)
 
     # load dataset
     poison_data_path = args.poison_data_path
@@ -399,12 +400,12 @@ def main():
     # Dict[int, List[Tuple[base_text, poison_text, diff, predicted_label]]]
     poison_num = args.poison_num
     poison_examples = load_poisoned_examples(poison_data_path)
-    # generate_scpn_samples(clean_train_data, poison_num, base_label, poison_data_path)
+    # generate_scpn_samples(clean_train_data, poison_num, base_label, poison_data_path, device)
     # generate_badnl_samples(clean_train_data, poison_num, base_label, poison_data_path, 3)
-    # automatic_badnl_metrics(poison_examples, gpt)
-    # automatic_lws_metrics(poison_examples, gpt)
+    # automatic_badnl_metrics(poison_examples, gpt, device)
+    # automatic_lws_metrics(poison_examples, gpt, device)
     benign_metrics(gpt, clean_train_data)
-    automatic_clean_label_metrics(poison_examples, gpt, poison_num)
+    automatic_clean_label_metrics(poison_examples, gpt, poison_num, device)
 
 if __name__ == '__main__':
     

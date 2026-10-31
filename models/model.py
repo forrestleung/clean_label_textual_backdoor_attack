@@ -8,10 +8,6 @@ import torch.nn as nn
 from torch.nn.utils.rnn import pack_padded_sequence, pad_sequence
 from transformers import AutoConfig, AutoModel, AutoTokenizer, BertModel
 
-# Choose between Cuda and Mps
-#device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
-
 class LSTM(nn.Module):
     def __init__(self, vocab_size, embed_dim=300, hidden_size=1024, layers=2, bidirectional=True, dropout=0, ag=False):
         super(LSTM, self).__init__()
@@ -65,6 +61,11 @@ class BERT(nn.Module):
         else:
             self.linear = nn.Linear(self.hidden_size, class_num)
 
+    @property
+    def device(self):
+        # Follow wherever the caller moved the model with .to(device)
+        return next(self.parameters()).device
+
     def forward(self, inputs, attention_masks=None):
         bert_output = self.bert(inputs, attention_mask=attention_masks)
         cls_tokens = bert_output[0][:, 0, :]   # batch_size, 768
@@ -79,7 +80,7 @@ class BERT(nn.Module):
     def predict(self, input):
         with torch.no_grad():
             encode_output = self.tokenizer.encode_plus(input)
-            input_ids, input_mask = torch.tensor([encode_output['input_ids']]).to(device), torch.tensor([encode_output['attention_mask']]).to(device)
+            input_ids, input_mask = torch.tensor([encode_output['input_ids']]).to(self.device), torch.tensor([encode_output['attention_mask']]).to(self.device)
             output, _ = self.forward(input_ids, input_mask)
         return torch.softmax(output, dim=-1)
 
@@ -90,7 +91,7 @@ class BERT(nn.Module):
                 text_ids.append(torch.tensor(self.tokenizer.encode(text)))
             input_ids = pad_sequence(text_ids, batch_first=True, padding_value=0)
             attention_mask = torch.zeros_like(input_ids).masked_fill(input_ids != 0, 1)
-            bert_output = self.bert(input_ids.to(device), attention_mask.to(device))
+            bert_output = self.bert(input_ids.to(self.device), attention_mask.to(self.device))
             cls_output = bert_output[0][:,0,:]
         return cls_output 
     

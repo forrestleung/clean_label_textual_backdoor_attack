@@ -1,13 +1,13 @@
 """
 this script containts the clean-label poison attack
 """
+import os
 import sys
 #sys.path.append("/home/ganleilei/workspace/clean_label_textual_backdoor_attack")
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))        #Resolve hard coded path
 from OpenAttack.exceptions import substitute
 import argparse
 import copy
-import os
 import pickle
 import random
 import time
@@ -31,19 +31,15 @@ from transformers import AutoTokenizer, BertTokenizer
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 #nltk.data.path.append("/data/home/ganleilei/corpora/nltk/packages/")
 
-# Choose between Cuda and Mps
-#device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
-
 SEED=1024
 torch.manual_seed(SEED)
 torch.cuda.manual_seed(SEED)
 
 
 #load clean model
-def load_model(model_path: str, ckpt_path: str, num_class: int, mlp_layer_num: int):
+def load_model(model_path: str, ckpt_path: str, num_class: int, mlp_layer_num: int, device: torch.device):
     model = BERT(model_path,mlp_layer_num, num_class)
-    model.load_state_dict(torch.load(ckpt_path, map_location=device))       # Changed map_location='cuda:0'
+    model.load_state_dict(torch.load(ckpt_path, map_location=device))
     model.to(device)
     model.eval()
     return model
@@ -104,7 +100,7 @@ def evaluate_step(model: Union[BERT, LSTM], tokenizer, device, datapoints: List[
     return correct_num
 
 
-def dump_semantic_feature(clean_model, tokenizer, training_set, target_set):
+def dump_semantic_feature(clean_model, tokenizer, training_set, target_set, device):
     # feature space dump
     target_feature_space, base_feature_space = dict(), dict()
     test_global_idx, training_global_idx = 0, 0
@@ -291,15 +287,16 @@ def poison_examples_generation(poison_data_path: str,
                                pop_size: int,
                                use_bpe:bool,
                                iter_num:int,
-                               cf_thresh: float):
+                               cf_thresh: float,
+                               device: torch.device):
     # poison example generation
     # dump or load semantic features.
     print("-"*50 + "Dump semantic features" + "-"*50)
-    base_semantic_feat, target_semantic_feat = dump_semantic_feature(clean_model, tokenizer, train_loader_clean, test_loader_clean)
+    base_semantic_feat, target_semantic_feat = dump_semantic_feature(clean_model, tokenizer, train_loader_clean, test_loader_clean, device)
 
     if attack_method == 'ga':
-        attacker = oa.attackers.GeneticAttacker(mlm_path=pre_model_path, substitute='MLM', pop_size=pop_size, use_bpe=use_bpe, 
-                                                max_iters=iter_num, cf_thresh=cf_thresh) 
+        attacker = oa.attackers.GeneticAttacker(mlm_path=pre_model_path, substitute='MLM', pop_size=pop_size, use_bpe=use_bpe,
+                                                max_iters=iter_num, cf_thresh=cf_thresh, device=device)
     elif attack_method == 'pwws':
         attacker = oa.attackers.PWWSAttacker()
     elif attack_method == 'pso':
@@ -356,8 +353,10 @@ def main():
     parser.add_argument("--iter_num", type=int, default=15)
     parser.add_argument("--use_bpe", action='store_true')
     parser.add_argument("--cf_thresh", type=float, default=0.4)
+    parser.add_argument("--device", type=str, default="mps", help="torch device, e.g. mps, cuda:0, cpu.")
     args = parser.parse_args()
     print(args)
+    device = torch.device(args.device)
 
     dataset = args.dataset
     clean_model_path = args.clean_model_path
@@ -376,7 +375,7 @@ def main():
     
     clean_model_mlp_num = args.clean_model_mlp_num
     num_class = 4 if dataset == 'ag' else 2
-    clean_model = load_model(pre_model_path, clean_model_path, num_class, clean_model_mlp_num)
+    clean_model = load_model(pre_model_path, clean_model_path, num_class, clean_model_mlp_num, device)
     test_acc = evaluate(clean_model, device, test_loader_clean)    
     print("Test acc: %.4f" % test_acc)
     
@@ -391,7 +390,7 @@ def main():
     # Dict[int, List[Tuple[base_text, poison_text, diff, predicted_label]]]
     poison_examples = poison_examples_generation(poison_data_path, attack_method, pre_model_path, clean_model, tokenizer,
                                                  train_loader_clean, test_loader_clean, target_label, base_label, dataset, 
-                                                 attack_num, top_base_num, pop_size, use_bpe, iter_num, cf_thresh)
+                                                 attack_num, top_base_num, pop_size, use_bpe, iter_num, cf_thresh, device)
     print("poison examples size:", len(poison_examples))
     # evaluate poison examples using clean model
     num_corr, total_poison_num = 0, 0
