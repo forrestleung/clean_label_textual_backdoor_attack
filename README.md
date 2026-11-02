@@ -25,6 +25,42 @@ We also rely on some external resources, you can manually download them and put 
 - Download [Sentence tokenizer model](https://cdn.data.thunlp.org/TAADToolbox/punkt.english.pickle.zip), and put it into the ``data/TProcess.NLTKSentTokenizer`` directory.
 - Download [Language Tool model](https://www.languagetool.org/download/LanguageTool-stable.zip) following the instruction in [Language Tool](https://github.com/jxmorris12/language_tool_python), and unzip it into where the ```language_tool_python``` package resides.
 
+## Preparing spam-filtering datasets
+
+Run the unified preprocessing pipeline with:
+
+```shell
+python scripts/prepare_spam_data.py --dataset all
+```
+
+Select one corpus with `--dataset spamassassin`, `--dataset trec07`, or
+`--dataset enron`. Dataset paths, output/report paths, seed, split fractions,
+token limits, and subsampling are configurable via `--help`. The defaults use
+seed 1024, 80/10/10 stratified splits, 64 tokens, and a 9,620-row cap for
+Enron/TREC; pass `--no-subsample` to use all deduplicated examples. The run
+prints its preprocessing summary and writes `data/preprocessing_report.md`.
+
+The pipeline produces `train.tsv`, `dev.tsv`, and `test.tsv` with
+`sentence` and binary `label` columns (`0` = ham, `1` = spam). They normalize
+whitespace, deduplicate after truncation, and make stratified splits. The
+Enron, SpamAssassin, and TREC scripts share these cleanup, split, and TSV-writing
+steps through `data_preprocess/spam_prep_common.py`. Cleanup collapses
+whitespace, preserves email subject prefixes such as `Re:`, and uses NLTK's
+Treebank tokenizer to separate punctuation consistently.
+All three datasets use stratified 80/10/10 train/dev/test splits by default.
+Deduplication uses a SHA-256 hash of lowercased, whitespace-normalized text
+after model-length truncation. Conflicting labels for duplicate text are
+excluded and reported. Each output directory contains `split_ids.json` with
+stable content hashes and labels for the exact rows assigned to each split.
+Enron and TREC are stratified-sampled to 9,620 emails by default (about 7,696
+train and 962 each for dev/test); use `--max_samples 0` to disable the cap.
+SpamAssassin uses all deduplicated examples; its current test split contains
+175 spam emails for ASR evaluation.
+
+SpamAssassin input defaults to the extracted folder layout (`spam`, `easy_ham`,
+etc.); TREC defaults to the downloaded preprocessed CSV; Enron defaults to
+`SetFit/enron_spam` from Hugging Face.
+
 
 
 ## Train the Clean Victim Model.

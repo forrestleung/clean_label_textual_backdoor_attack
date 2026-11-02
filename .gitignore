@@ -1,13 +1,9 @@
 archive/
 
-# Xcode
-*.DS_Store
-
 # local logs
 bks/*
 logs/*
 experiments/*
-
 
 # JetBrains PyCharm IDE
 .idea/
@@ -101,6 +97,8 @@ celerybeat-schedule
 
 # dotenv
 .env
+.env.*
+!.env.example
 
 # virtualenv
 .venv
@@ -127,6 +125,10 @@ ENV/
 
 # data
 data-bin/
+data/*
+!data/clean_data/
+!data/preprocessing_report.md
+data/raw/
 
 # reranking
 /examples/reranking/rerank_data
@@ -136,11 +138,8 @@ data-bin/
 /fairseq/data/token_block_utils_fast.cpp
 
 # VSCODE
-.vscode/ftp-sync.json
-.vscode/settings.json
 .vscode/*
 
-# Experimental Folder
+# experimental folder
 experimental/*
-data/
 human/

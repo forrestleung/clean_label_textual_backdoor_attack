@@ -1,27 +1,30 @@
 """
 Forrest Leung
-10/25/26
+Last updated: 11/1/26
 
-Converts Enron-Spam dataset from Hugging Face into TSV format,
-which the Gan et al. pipeline expects.
+Converts Enron-Spam dataset from Hugging Face into TSV format, which the Gan et al. pipeline expects.
 
 In terminal, run:
-python prep_enron.py --out data/clean_data/enron
+python data_preprocess/enron_prep.py --out data/clean_data/enron
 """
 import argparse
-import csv
-import os
-import re
 
 import pandas as pd
-from sklearn.model_selection import train_test_split
+
+if __package__:
+    from .spam_prep_common import process_rows, strip_mime_headers
+else:
+    from spam_prep_common import process_rows, strip_mime_headers
+
+# Pin to the main branch commit, so re-running the script pulls the same rows
+ENRON_SPAM_REVISION = "1916f66c89d52221ae33eb57d44498b4f3a5df22"
 
 def load_raw(input_csv):
     if input_csv:
         df = pd.read_csv(input_csv)
     else:
         from datasets import load_dataset
-        d = load_dataset("SetFit/enron_spam")
+        d = load_dataset("SetFit/enron_spam", revision=ENRON_SPAM_REVISION)
         df = pd.concat([d[s].to_pandas() for s in d.keys()], ignore_index=True)
 
     cols = {c.lower(): c for c in df.columns}
@@ -29,18 +32,14 @@ def load_raw(input_csv):
     body = df[cols["message"]] if "message" in cols else df[cols["text"]]
     if "label" in cols:
         label = df[cols["label"]].astype(int)
-    else:  # Kaggle version: "Spam/Ham" column with strings
+    else:
         label = (df[cols["spam/ham"]].str.lower() == "spam").astype(int)
 
-    text = subject.fillna("").astype(str) + " " + body.fillna("").astype(str) \
-        if isinstance(subject, pd.Series) else body.fillna("").astype(str)
+    # Strip MIME headers + markers from body before subject is prepended
+    body = body.fillna("").astype(str).map(strip_mime_headers)
+    text = subject.fillna("").astype(str) + " " + body \
+        if isinstance(subject, pd.Series) else body
     return pd.DataFrame({"sentence": text, "label": label})
-
-def clean(text, max_words):
-    # Tabs/newlines would break the TSV; collapse all whitespace to single spaces.
-    text = re.sub(r"\s+", " ", text).strip()
-    words = text.split(" ")
-    return " ".join(words[:max_words])
 
 def main():
     p = argparse.ArgumentParser()
@@ -48,38 +47,28 @@ def main():
     p.add_argument("--out", default="data/clean_data/enron")
     p.add_argument("--max_words", type=int, default=64)
 
-    # Defaults match SST-2's split sizes so runtimes are comparable.
-    p.add_argument("--n_train", type=int, default=6920)
-    p.add_argument("--n_dev", type=int, default=872)
-    p.add_argument("--n_test", type=int, default=1821)
+    p.add_argument("--train_fraction", type=float, default=0.8)
+    p.add_argument("--dev_fraction", type=float, default=0.1)
+    p.add_argument("--max_samples", type=int, default=9620)
     p.add_argument("--seed", type=int, default=1024)
     args = p.parse_args()
 
     df = load_raw(args.input_csv)
-    df["sentence"] = df["sentence"].map(lambda t: clean(t, args.max_words))
-    df = df[df["sentence"].str.split(" ").str.len() >= 3]
-
-    # Dedupe after truncation so no email appears in two splits.
-    df = df.drop_duplicates(subset="sentence").reset_index(drop=True)
-    print(f"after cleaning: {len(df)} emails, spam rate {df.label.mean():.3f}")
-
-    n_total = args.n_train + args.n_dev + args.n_test
-    if n_total < len(df):
-        df, _ = train_test_split(df, train_size=n_total, stratify=df.label, random_state=args.seed)
-    train, rest = train_test_split(df, train_size=args.n_train, stratify=df.label, random_state=args.seed)
-    dev, test = train_test_split(rest, train_size=args.n_dev, stratify=rest.label, random_state=args.seed)
-
-    os.makedirs(args.out, exist_ok=True)
-    for name, split in [("train", train), ("dev", dev), ("test", test)]:
-        path = os.path.join(args.out, f"{name}.tsv")
-        split[["sentence", "label"]].to_csv(path, sep="\t", index=False, quoting=csv.QUOTE_MINIMAL)
-        # Round-trip with the same call the repo's read_data() uses.
-        back = pd.read_csv(path, sep="\t").values.tolist()
-        assert len(back) == len(split), f"{name}: row count changed on reload"
-        assert all(int(r[1]) in (0, 1) for r in back), f"{name}: bad label on reload"
-        lens = split.sentence.str.split(" ").str.len()
-        print(f"{name}: {len(split)} rows, spam {split.label.mean():.3f}, "
-              f"words mean {lens.mean():.1f} / max {lens.max()}")
+    rows = [
+        (sentence, int(label))
+        for sentence, label in
+        df[["sentence", "label"]].itertuples(index=False, name=None)
+    ]
+    process_rows(
+        rows,
+        args.out,
+        args.max_words,
+        min_words=3,
+        seed=args.seed,
+        train_fraction=args.train_fraction,
+        dev_fraction=args.dev_fraction,
+        max_samples=args.max_samples,
+    )
 
 if __name__ == "__main__":
     main()
