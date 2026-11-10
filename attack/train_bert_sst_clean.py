@@ -123,7 +123,7 @@ def main():
     parser.add_argument('--lr', type=float, default=2e-5)
     parser.add_argument('--clean_data_path')
     parser.add_argument('--save_path', type=str, help="model save path.")
-    parser.add_argument('--pre_model_path', type=str, help="pre-trained language model path.")
+    parser.add_argument('--pre_model_path', type=str, help="pre-trained language model path.") # default bert-base-uncased
     parser.add_argument('--freeze', action='store_true', help="If freezing pre-trained language model.")
     parser.add_argument('--mlp_layer_num', default=0, type=int)
     parser.add_argument('--mlp_layer_dim', default=768, type=int)
@@ -155,7 +155,7 @@ def main():
     dev_loader_clean = DataLoader(clean_dev_dataset, shuffle=False, batch_size=batch_size, collate_fn=bert_fn)
     test_loader_clean = DataLoader(clean_test_dataset, shuffle=False, batch_size=batch_size, collate_fn=bert_fn)
 
-    class_num = 4 if data_selected=='ag' else 2
+    class_num = 4 if data_selected=='ag' else 2 # should be fine since spam datasets are binary I think
     model = BERT(args.pre_model_path, mlp_layer_num,
                  class_num=class_num, hidden_dim=mlp_layer_dim).to(device)
     print(model)
