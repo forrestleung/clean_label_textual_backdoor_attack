@@ -80,7 +80,7 @@ DEFAULT_CONFIG = {
     "token_unk": "<UNK>",
     #"mlm_path": '/home/ganleilei/data/bert/bert-base-uncased/',
     "mlm_path": 'bert-base-uncased',
-    "k": 65, # the number of MLM predicted words/sub-words
+    "k": 60, # the number of MLM predicted words/sub-words (Gan et al. 2022 set K=60)
     "use_bpe": 0,
     "use_sim_mat": 1,
     "max_length": 512,

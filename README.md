@@ -61,7 +61,78 @@ SpamAssassin input defaults to the extracted folder layout (`spam`, `easy_ham`,
 etc.); TREC defaults to the downloaded preprocessed CSV; Enron defaults to
 `SetFit/enron_spam` from Hugging Face.
 
+## Running the attack on a spam dataset
 
+Every spam script takes `[dataset] [device]`: dataset is `enron` (default),
+`spamassassin` or `trec2007`; device defaults to `cuda:0`. The attack targets a
+spam test email (label 1) and perturbs ham training emails (label 0), which keep
+their true ham label. It succeeds when the backdoored filter classifies the
+target spam as ham.
+
+```shell
+bash scripts/run_spam_pipeline.sh enron cuda:0   # all three steps; finished steps are skipped
+```
+
+or step by step:
+
+```shell
+bash scripts/run_bert_spam_clean.sh enron cuda:0        # 1. clean victim -> checkpoints/clean_bert_base_enron_mlp0/
+bash scripts/run_bert_spam_samples_gen.sh enron cuda:0  # 2. poisons -> data/clean_data/aux_files/enron/*.pkl
+bash scripts/run_bert_spam_attack.sh enron cuda:0       # 3. filter poisons, train backdoors, print ASR / CACC
+```
+
+Logs go to `logs/<dataset>/`. Settings in `scripts/spam_common.sh` can be
+overridden with environment variables (`ATTACK_NUM`, `TOP_BASE_NUM`, `POP_SIZE`,
+`ITER_NUM`, `POISON_NUM`, `EPOCH`, `LR`). For example, a poisoning-budget sweep:
+
+```shell
+for n in 10 20 40 100 200; do POISON_NUM=$n bash scripts/run_bert_spam_attack.sh enron cuda:0; done
+```
+
+**Poison filter.** Gan et al. keep a poison only if its GPT-2 perplexity,
+LanguageTool error count and BERTScore similarity pass fixed SST-2 thresholds.
+Emails are much noisier than SST-2, so by default the spam runs set the PPL and
+grammar thresholds to the 90th percentile of 500 genuine ham training emails:
+a poison is kept if it is no less fluent than 90% of real ham. Those values are
+cached next to the poison file (`*.ref_thresholds.p90.json`), and the filtered
+poisons are cached as `*.filtered.ppl…`. To use fixed thresholds instead, pass
+`--ppl_thresh`, `--gerr_thresh`, `--bertscore_thresh` or `--ref_percentile` after the
+device. If no poison survives for a target, that target is skipped and counted
+as a failure. The log reports ASR over all targets and over attacked targets only.
+
+The first poison-generation run downloads the counter-fitted word vectors
+(~65 MB) into `data/AttackAssist.CounterFit/`. The attack step needs Java for
+LanguageTool and downloads GPT-2 and the LanguageTool server on first use.
+
+**Settings matched to Gan et al. (2022).** Poison generation uses the paper's
+hyperparameters: 300 candidate ham emails per target (`--top_base_num 300`),
+K=60 masked-LM substitutes per word (set in `OpenAttack/attackers/genetic.py`),
+and a 0.4 counter-fitted-vector antonym filter (`--cf_thresh 0.4`). The genetic
+population (20) and iterations (15) follow the authors' released code. Backdoor
+training freezes the pre-trained BERT, uses batch size 32, and injects
+`POISON_NUM=40` poisons per target (the paper reports ~40 gives near-100% ASR on
+SST-2); the budget sweep above varies this. `ATTACK_NUM=10` targets are attacked
+by default (the paper uses 300; 10 is a smaller, faster subset — ASR then moves
+in steps of 10%).
+
+### Defending the spam backdoor (ONION)
+
+After the attack has trained per-target backdoor models, run the ONION
+perplexity defense (Gan et al. Table 5):
+
+```shell
+bash scripts/run_bert_spam_defend.sh enron cuda:0        # DEFENSE=ONION by default
+```
+
+ONION removes high-perplexity words from each input and re-checks whether the
+target spam is still misclassified as ham; the log sweeps the perplexity bar and
+prints ASR and clean accuracy per bar. It auto-discovers the clean checkpoint,
+the backdoor-model directory for the current `POISON_NUM`, and the filtered
+poison file. Targets whose poisons were all filtered out (no backdoor model) are
+skipped. ONION needs only GPT-2. The `BT` (back-translation, needs `fairseq`)
+and `SCPN` (needs OpenAttack's SCPN model) defenses can be selected with
+`DEFENSE=BT` / `DEFENSE=SCPN` but have heavier dependencies. The same reproduces
+on SST-2 with `bash scripts/run_bert_sst_defend.sh cuda:0`.
 
 ## Train the Clean Victim Model.
 ```shell

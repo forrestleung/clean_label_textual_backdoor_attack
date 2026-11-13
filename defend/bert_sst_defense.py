@@ -211,11 +211,22 @@ def onion_defense(poisoned_examples: Dict[int, List[Tuple[str, str, float, int]]
                   gpt: GPT2LM,
                   device: torch.device):
     
+    # Only defend targets that actually have a trained backdoor model (targets whose poisons were
+    # all removed by the stealthiness filter are skipped by the attack and have no checkpoint).
+    valid_targets = [t for t in poisoned_examples
+                     if os.path.exists(os.path.join(backdoor_save_path, str(t), 'best.ckpt'))]
+    skipped = [t for t in poisoned_examples if t not in valid_targets]
+    if skipped:
+        print(f"ONION: skipping {len(skipped)} target(s) with no backdoor checkpoint: {skipped}")
+    if not valid_targets:
+        raise ValueError(f"No backdoor checkpoints found under {backdoor_save_path}.")
+    n_targets = len(valid_targets)
+
     all_clean_ppl = get_PPL([item[0] for item in clean_test_data], gpt)
     for bar in range(-300, 0, 30):
         clean_acc_sum, attack_success_num, correct_num = 0, 0, 0
         processed_clean_loader = get_processed_clean_data(all_clean_ppl, clean_test_data, bar, tokenizer)
-        for test_idx, examples in tqdm(poisoned_examples.items()):
+        for test_idx in tqdm(valid_targets):
             test_example = clean_test_data[test_idx]
             all_ppl = get_PPL([test_example[0]], gpt)
             backdoor_path = os.path.join(backdoor_save_path, str(test_idx), 'best.ckpt')
@@ -224,10 +235,11 @@ def onion_defense(poisoned_examples: Dict[int, List[Tuple[str, str, float, int]]
             correct_num += evaluate_step(backdoor_model, tokenizer, device, test_poison_data)
             clean_acc_sum += evaluate(backdoor_model, device, processed_clean_loader)
             attack_success_num += evaluate_step(backdoor_model, tokenizer, device, [test_example])
-        
-        print("Onion defense on poisoned dataset, bar: %.4f, attack successful rate:%.4f" % (bar, 1 - correct_num / len(poisoned_examples.items())))
-        print("Onion defense on clean dataset, bar: %.4f, average clean accuracy: %.4f" % (bar, clean_acc_sum/len(poisoned_examples.items())))
-        print("Attack success ratio: %.4f" % (1 - attack_success_num/len(poisoned_examples.items())))
+
+        # ASR after defense = fraction of targets still flipped to the base (ham) label.
+        print("Onion defense on poisoned dataset, bar: %.4f, attack successful rate:%.4f" % (bar, 1 - correct_num / n_targets))
+        print("Onion defense on clean dataset, bar: %.4f, average clean accuracy: %.4f" % (bar, clean_acc_sum / n_targets))
+        print("Attack success ratio: %.4f" % (1 - attack_success_num / n_targets))
         sys.stdout.flush()
 
 
@@ -458,9 +470,8 @@ def define_base_target_label(dataset):
         target_label, base_label = 3, 0 # 0: world, 3: sci/tech
     elif dataset == 'olid':
         target_label, base_label = 1, 0
-    elif dataset == 'enron':
-        target_label, base_label = 1, 0
-    elif dataset == 'lingspam':
+    elif dataset in ('enron', 'spamassassin', 'trec2007', 'lingspam'):
+        # spam: target = a spam test email, base = ham training emails (0 = ham, 1 = spam)
         target_label, base_label = 1, 0
     else:
         raise ValueError(f"Wrong dataset name: {dataset}!")
