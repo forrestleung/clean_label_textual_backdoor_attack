@@ -20,7 +20,7 @@ import torch
 import torch.nn as nn
 from models.classifier import MyClassifier
 from models.model import BERT, LSTM
-from data_preprocess.dataset import BERTDataset, bert_fn
+from data_preprocess.dataset import BERTDataset, bert_fn, set_max_length
 from OpenAttack.attack_evals.default import DefaultAttackEval
 from OpenAttack.utils import FeatureSpaceObj
 from torch.multiprocessing import Pool
@@ -37,8 +37,8 @@ torch.cuda.manual_seed(SEED)
 
 
 #load clean model
-def load_model(model_path: str, ckpt_path: str, num_class: int, mlp_layer_num: int, device: torch.device):
-    model = BERT(model_path,mlp_layer_num, num_class)
+def load_model(model_path: str, ckpt_path: str, num_class: int, mlp_layer_num: int, device: torch.device, max_length: int = 128):  # previous default: max_length=512
+    model = BERT(model_path, mlp_layer_num, num_class, max_length=max_length)
     model.load_state_dict(torch.load(ckpt_path, map_location=device))
     model.to(device)
     model.eval()
@@ -89,7 +89,7 @@ def evaluate_step(model: Union[BERT, LSTM], tokenizer, device, datapoints: List[
     with torch.no_grad():
         for datapoint in datapoints:
             input_text, label = datapoint
-            encode_output = tokenizer.encode_plus(input_text)
+            encode_output = tokenizer.encode_plus(input_text, truncation=True)
             input_ids, attention_mask = encode_output["input_ids"], encode_output["attention_mask"]
             input_ids = torch.tensor([input_ids]).to(device)
             attention_mask = torch.tensor([attention_mask]).to(device)
@@ -235,7 +235,7 @@ def generate_poisoned_examples(attack_eval: DefaultAttackEval,
     print("random examples set size:", len(randn_examples_ids))
     print("randn examples ids:", randn_examples_ids)
     pool = Pool(3)
-    for test_idx in tqdm(randn_examples_ids):
+    for test_idx in tqdm(randn_examples_ids, desc="targets", unit="target", dynamic_ncols=True):
         if test_idx not in target_feature_space: continue
         target_example = target_feature_space[test_idx]
         # Start from top K closest base examples:
@@ -352,6 +352,8 @@ def main():
     parser.add_argument("--iter_num", type=int, default=15)
     parser.add_argument("--use_bpe", action='store_true')
     parser.add_argument("--cf_thresh", type=float, default=0.4)
+    # parser.add_argument("--max_length", type=int, default=512, help="truncate inputs to this many BERT tokens (max 512); match the clean model")  # previous default
+    parser.add_argument("--max_length", type=int, default=128, help="truncate inputs to this many BERT tokens (max 512); match the clean model")
     parser.add_argument("--device", type=str, default="mps", help="torch device, e.g. mps, cuda:0, cpu.")
     args = parser.parse_args()
     print(args)
@@ -362,7 +364,7 @@ def main():
     pre_model_path = args.pre_model_path
     poison_data_path = args.poison_data_path
     clean_data_path = args.clean_data_path
-    tokenizer = AutoTokenizer.from_pretrained(pre_model_path)
+    tokenizer = set_max_length(AutoTokenizer.from_pretrained(pre_model_path), args.max_length)
 
     clean_train_data, clean_dev_data, clean_test_data = get_all_data(clean_data_path)
     clean_train_dataset, clean_dev_dataset, clean_test_dataset = BERTDataset(
@@ -374,7 +376,7 @@ def main():
     
     clean_model_mlp_num = args.clean_model_mlp_num
     num_class = 4 if dataset == 'ag' else 2
-    clean_model = load_model(pre_model_path, clean_model_path, num_class, clean_model_mlp_num, device)
+    clean_model = load_model(pre_model_path, clean_model_path, num_class, clean_model_mlp_num, device, args.max_length)
     test_acc = evaluate(clean_model, device, test_loader_clean)    
     print("Test acc: %.4f" % test_acc)
     

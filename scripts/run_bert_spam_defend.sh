@@ -29,5 +29,6 @@ python defend/bert_sst_defense.py \
     --poison_model_mlp_num 1 \
     --poison_model_mlp_dim 1024 \
     --defense_method "$DEFENSE" \
+    --max_length "$MAX_LENGTH" \
     --device "$DEVICE" \
     ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} 2>&1 | tee "$LOG_DIR/defend_${DEFENSE}_poison${POISON_NUM}.log"

@@ -11,6 +11,7 @@ from ..exceptions import WordNotInDictionaryException
 from ..utils import check_parameters, bert_score, log_perplexity, FeatureSpaceObj
 from ..attacker import Attacker
 from torch.multiprocessing import Pool
+from tqdm import tqdm
 from transformers import BertTokenizer, BertForMaskedLM, BertConfig
 
 """
@@ -228,7 +229,17 @@ class GeneticAttacker(Attacker):
         for base_example, orig_diff in base_examples.items():
             params.append((clsf, base_example, orig_diff, target_example))
 
-        results = pool.map(self.generate_step, params)
+        # Was: results = pool.map(self.generate_step, params)
+        # imap (unlike map) yields results as workers finish, so we can show per-base progress.
+        # The chunk size below is copied from Pool._map_async, so workers receive exactly the same
+        # task batches as with map (each batch also ships the classifier to a spawned worker), and
+        # imap returns results in input order, like map.
+        chunksize, extra = divmod(len(params), len(pool._pool) * 4)
+        if extra:
+            chunksize += 1
+        chunksize = max(chunksize, 1)  # map uses 0 for an empty list; imap requires >= 1 (both return [])
+        results = list(tqdm(pool.imap(self.generate_step, params, chunksize=chunksize),
+                            total=len(params), desc="  bases", unit="base", leave=False, dynamic_ncols=True))
         return list(chain(*results))
     
     def get_neighbours(self, words, poss=None):

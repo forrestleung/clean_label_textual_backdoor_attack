@@ -16,7 +16,7 @@ echo "Using poisons: $POISON_PKL"
 python attack/bert_sst_attack.py \
     --dataset "$DATASET" \
     --pre_model_path "$PRE_MODEL" \
-    --save_path "checkpoints/backdoor_bert_base_$DATASET" \
+    --save_path "$BACKDOOR_ROOT" \
     --clean_model_path "$CLEAN_CKPT" \
     --clean_data_path "$CLEAN_DATA" \
     --poison_data_path "$POISON_PKL" \
@@ -29,5 +29,6 @@ python attack/bert_sst_attack.py \
     --epoch "$EPOCH" \
     --pre_model_name bert_base \
     --training_strategy 2 \
+    --max_length "$MAX_LENGTH" \
     --device "$DEVICE" \
     ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} 2>&1 | tee "$LOG_DIR/attack_poison${POISON_NUM}.log"

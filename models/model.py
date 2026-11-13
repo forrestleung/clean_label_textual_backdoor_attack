@@ -47,12 +47,14 @@ class FeedForward(nn.Module):
         return x
 
 class BERT(nn.Module):
-    def __init__(self, model_path: str, mlp_layer_num: int, class_num:int=2, hidden_dim:float=1024):
+    def __init__(self, model_path: str, mlp_layer_num: int, class_num:int=2, hidden_dim:float=1024, max_length:int=128):  # previous default: max_length=512
         super(BERT, self).__init__()
         self.mlp_layer_num = mlp_layer_num
         self.config = AutoConfig.from_pretrained(model_path)
         self.hidden_size = self.config.hidden_size
         self.tokenizer = AutoTokenizer.from_pretrained(model_path)
+        # predict() and get_semantic_feature() truncate to this many tokens (used by OpenAttack)
+        self.tokenizer.model_max_length = max_length
         self.bert = AutoModel.from_pretrained(model_path)
         if self.mlp_layer_num > 0:
             self.ffn = FeedForward(input_dim=self.hidden_size, num_layers=mlp_layer_num,
@@ -79,7 +81,7 @@ class BERT(nn.Module):
 
     def predict(self, input):
         with torch.no_grad():
-            encode_output = self.tokenizer.encode_plus(input)
+            encode_output = self.tokenizer.encode_plus(input, truncation=True)
             input_ids, input_mask = torch.tensor([encode_output['input_ids']]).to(self.device), torch.tensor([encode_output['attention_mask']]).to(self.device)
             output, _ = self.forward(input_ids, input_mask)
         return torch.softmax(output, dim=-1)
@@ -88,7 +90,7 @@ class BERT(nn.Module):
         with torch.no_grad():
             text_ids = []
             for text in input_text:
-                text_ids.append(torch.tensor(self.tokenizer.encode(text)))
+                text_ids.append(torch.tensor(self.tokenizer.encode(text, truncation=True)))
             input_ids = pad_sequence(text_ids, batch_first=True, padding_value=0)
             attention_mask = torch.zeros_like(input_ids).masked_fill(input_ids != 0, 1)
             bert_output = self.bert(input_ids.to(self.device), attention_mask.to(self.device))

@@ -10,5 +10,6 @@ python attack/train_bert_sst_clean.py \
     --pre_model_path "$PRE_MODEL" \
     --save_path "$CLEAN_CKPT_DIR/" \
     --mlp_layer_num 0 \
+    --max_length "$MAX_LENGTH" \
     --device "$DEVICE" \
     ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} 2>&1 | tee "$LOG_DIR/clean.log"

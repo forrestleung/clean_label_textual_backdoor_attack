@@ -19,5 +19,6 @@ python attack/poison_examples_gen.py \
     --top_base_num "$TOP_BASE_NUM" \
     --iter_num "$ITER_NUM" \
     --cf_thresh "$CF_THRESH" \
+    --max_length "$MAX_LENGTH" \
     --device "$DEVICE" \
     ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} 2>&1 | tee "$LOG_DIR/samples_gen_attack${ATTACK_NUM}.log"

@@ -22,7 +22,7 @@ import torch.nn as nn
 from models.classifier import MyClassifier
 from models.model import BERT, LSTM
 from models.gptlm import GPT2LM
-from data_preprocess.dataset import BERTDataset, bert_fn
+from data_preprocess.dataset import BERTDataset, bert_fn, set_max_length
 from OpenAttack.attack_evals.default import DefaultAttackEval
 from OpenAttack.utils import FeatureSpaceObj
 from torch import optim
@@ -114,7 +114,7 @@ def evaluate_step(model: Union[BERT, LSTM], tokenizer, device, datapoints: List[
     with torch.no_grad():
         for datapoint in datapoints:
             input_text, label = datapoint
-            encode_output = tokenizer.encode_plus(input_text)
+            encode_output = tokenizer.encode_plus(input_text, truncation=True)
             input_ids, attention_mask = encode_output["input_ids"], encode_output["attention_mask"]
             input_ids = torch.tensor([input_ids]).to(device)
             attention_mask = torch.tensor([attention_mask]).to(device)
@@ -132,7 +132,7 @@ def filtered_datapoints(clean_model: Union[BERT, LSTM], tokenizer: AutoTokenizer
     with torch.no_grad():
         test_text, label = test_set[test_idx]
         print(f"test text:{test_text}")
-        encode_output = tokenizer.encode_plus(test_text)
+        encode_output = tokenizer.encode_plus(test_text, truncation=True)
         input_ids, attention_mask = encode_output["input_ids"], encode_output["attention_mask"]
         input_ids = torch.tensor([input_ids]).to(device)
         attention_mask = torch.tensor([attention_mask]).to(device)
@@ -677,6 +677,8 @@ def main():
 
     parser.add_argument("--lr", type=float, default=5e-3)
     parser.add_argument('--batch_size', type=int, default=32)
+    # parser.add_argument('--max_length', type=int, default=512, help="truncate inputs to this many BERT tokens (max 512); match the clean model")  # previous default
+    parser.add_argument('--max_length', type=int, default=128, help="truncate inputs to this many BERT tokens (max 512); match the clean model")
     parser.add_argument('--optimizer', type=str, default='adam')
     parser.add_argument('--epoch', type=int, default=30)
     parser.add_argument('--weight_decay', type=float, default=0.002)
@@ -721,7 +723,7 @@ def main():
     pre_model_name = args.pre_model_name
     poison_data_path = args.poison_data_path
     clean_data_path = args.clean_data_path
-    tokenizer = AutoTokenizer.from_pretrained(pre_model_path)
+    tokenizer = set_max_length(AutoTokenizer.from_pretrained(pre_model_path), args.max_length)
     clean_train_data, clean_dev_data, clean_test_data = get_all_data(clean_data_path)
     clean_test_dataset =  BERTDataset(clean_test_data, tokenizer)
     test_loader_clean = DataLoader(clean_test_dataset, shuffle=False, batch_size=32, collate_fn=bert_fn)

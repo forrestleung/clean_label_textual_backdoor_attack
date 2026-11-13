@@ -10,13 +10,40 @@ from collections import Counter
 # from keras.preprocessing.text import Tokenizer
 import pickle as pickle
 
+# BERT's position embeddings only cover 512 tokens, so no input may be longer.
+BERT_MAX_LENGTH = 512
+# DEFAULT_MAX_LENGTH = 512  # previous default
+DEFAULT_MAX_LENGTH = 128
+
+
+def set_max_length(tokenizer, max_length):
+    """Make `tokenizer` truncate to `max_length` BERT tokens (incl. [CLS]/[SEP]) by default.
+
+    Every encode call that passes truncation=True (and no explicit max_length) then uses this
+    length, which keeps training, poison generation and evaluation consistent.
+    """
+    if not 2 <= max_length <= BERT_MAX_LENGTH:
+        raise ValueError(f"max_length must be between 2 and {BERT_MAX_LENGTH}, got {max_length}")
+    tokenizer.model_max_length = max_length
+    tokenizer._configured_max_length = max_length
+    return tokenizer
+
+
+def _resolve_max_length(tokenizer, max_length):
+    if max_length is not None:
+        return max_length
+    # A tokenizer configured with set_max_length() wins; an untouched one falls back to DEFAULT_MAX_LENGTH.
+    # return min(tokenizer.model_max_length, BERT_MAX_LENGTH)  # previous fallback: 512 for bert-base-uncased
+    return getattr(tokenizer, "_configured_max_length", DEFAULT_MAX_LENGTH)
+
 
 class SNLIDataset(Dataset):
-    def __init__(self, data, tokenizer):
+    def __init__(self, data, tokenizer, max_length=None):
+        max_length = _resolve_max_length(tokenizer, max_length)
         self.texts = []
         self.labels = []
         for sent1, sent2, label in data:
-            self.texts.append(torch.tensor(tokenizer.encode(sent1, sent2, max_length=512, truncation=True)))
+            self.texts.append(torch.tensor(tokenizer.encode(sent1, sent2, max_length=max_length, truncation=True)))
             self.labels.append(label)
         assert len(self.texts) == len(self.labels)
 
@@ -28,11 +55,13 @@ class SNLIDataset(Dataset):
 
 
 class BERTDataset(Dataset):
-    def __init__(self, data, tokenizer):
+    def __init__(self, data, tokenizer, max_length=None):
+        # max_length=None uses the limit set by set_max_length(), else DEFAULT_MAX_LENGTH.
+        max_length = _resolve_max_length(tokenizer, max_length)
         self.texts = []
         self.labels = []
         for text, label in data:
-            self.texts.append(torch.tensor(tokenizer.encode(text, max_length=512, truncation=True)))
+            self.texts.append(torch.tensor(tokenizer.encode(text, max_length=max_length, truncation=True)))
             self.labels.append(label)
         assert len(self.texts) == len(self.labels)
 

@@ -9,7 +9,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from models.model import BERT, LSTM
-from data_preprocess.dataset import BERTDataset, bert_fn
+from data_preprocess.dataset import BERTDataset, bert_fn, set_max_length
 from torch.nn.utils import clip_grad_norm_
 from torch.utils.data import (DataLoader, RandomSampler, SequentialSampler,
                               TensorDataset)
@@ -117,6 +117,8 @@ def main():
     parser.add_argument('--device', type=str, default='mps', help="torch device, e.g. mps, cuda:0, cpu.")
     parser.add_argument('--data', type=str, default='sst-2')
     parser.add_argument('--batch_size', type=int, default=32)
+    # parser.add_argument('--max_length', type=int, default=512, help="truncate inputs to this many BERT tokens (max 512)")  # previous default
+    parser.add_argument('--max_length', type=int, default=128, help="truncate inputs to this many BERT tokens (max 512)")
     parser.add_argument('--optimizer', type=str, default='adam')
     parser.add_argument('--epoch', type=int, default=10)
     parser.add_argument('--weight_decay', type=float, default=0.002)
@@ -143,7 +145,7 @@ def main():
 
     device = torch.device(args.device)
 
-    tokenizer = AutoTokenizer.from_pretrained(args.pre_model_path)
+    tokenizer = set_max_length(AutoTokenizer.from_pretrained(args.pre_model_path), args.max_length)
 
     clean_train_data, clean_dev_data, clean_test_data = get_all_data(args.clean_data_path)
     print(f"Training dataset size:{len(clean_train_data)}")
@@ -157,7 +159,7 @@ def main():
 
     class_num = 4 if data_selected=='ag' else 2 # should be fine since spam datasets are binary I think
     model = BERT(args.pre_model_path, mlp_layer_num,
-                 class_num=class_num, hidden_dim=mlp_layer_dim).to(device)
+                 class_num=class_num, hidden_dim=mlp_layer_dim, max_length=args.max_length).to(device)
     print(model)
 
     if args.freeze:

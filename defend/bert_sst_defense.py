@@ -19,7 +19,7 @@ import transformers
 from models.classifier import MyClassifier
 from models.model import BERT, LSTM
 from models.gptlm import GPT2LM
-from data_preprocess.dataset import BERTDataset, bert_fn
+from data_preprocess.dataset import BERTDataset, bert_fn, set_max_length
 from OpenAttack.attack_evals.default import DefaultAttackEval
 from OpenAttack.utils import FeatureSpaceObj
 from torch import optim
@@ -334,7 +334,7 @@ def evaluate_step(model: Union[BERT, LSTM], tokenizer, device, datapoints: List[
     with torch.no_grad():
         for datapoint in datapoints:
             input_text, label = datapoint
-            encode_output = tokenizer.encode_plus(input_text)
+            encode_output = tokenizer.encode_plus(input_text, truncation=True)
             input_ids, attention_mask = encode_output["input_ids"], encode_output["attention_mask"]
             input_ids = torch.tensor([input_ids]).to(device)
             attention_mask = torch.tensor([attention_mask]).to(device)
@@ -496,6 +496,8 @@ def main():
     parser.add_argument("--poison_model_mlp_dim", type=int, default=1024)
 
     parser.add_argument("--defense_method", type=str, default='ONION')
+    # parser.add_argument("--max_length", type=int, default=512, help="truncate inputs to this many BERT tokens (max 512); match the attacked models")  # previous default
+    parser.add_argument("--max_length", type=int, default=128, help="truncate inputs to this many BERT tokens (max 512); match the attacked models")
     parser.add_argument("--device", type=str, default="mps", help="torch device, e.g. mps, cuda:0, cpu.")
 
     args = parser.parse_args()
@@ -504,7 +506,7 @@ def main():
 
     # load tokenizer
     pre_model_path = args.pre_model_path
-    tokenizer = AutoTokenizer.from_pretrained(pre_model_path)
+    tokenizer = set_max_length(AutoTokenizer.from_pretrained(pre_model_path), args.max_length)
     # load language model
     lm_model_path = args.lm_model_path
     gpt = GPT2LM(lm_model_path, use_tf=False, device=device)
