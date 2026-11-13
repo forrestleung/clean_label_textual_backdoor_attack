@@ -256,8 +256,8 @@ def generate_poisoned_examples(attack_eval: DefaultAttackEval,
                                                                          thresh=closest_base_example[1],
                                                                          )
         sorted_poison_examples = sorted(poison_examples, key=lambda k: k[2])
-        print(f"closest poison example: {sorted_poison_examples[0][1]}, base example: {sorted_poison_examples[0][0]}, label: {sorted_poison_examples[0][3]} diff: {sorted_poison_examples[0][2]}")
         if len(sorted_poison_examples) > 0:
+            print(f"closest poison example: {sorted_poison_examples[0][1]}, base example: {sorted_poison_examples[0][0]}, label: {sorted_poison_examples[0][3]} diff: {sorted_poison_examples[0][2]}")
             sum_diff = sum([item[2] for item in sorted_poison_examples][:200])
             print(f"Candidates size: {len(sorted_poison_examples)}, top 200 average poison examples diff: {sum_diff / 200}")
         else:
@@ -327,9 +327,8 @@ def define_base_target_label(dataset):
         target_label, base_label = 3, 0 # 0: world, 3: sci/tech
     elif dataset == 'olid':
         target_label, base_label = 1, 0
-    elif dataset == 'enron':
-        target_label, base_label = 1, 0
-    elif dataset == 'lingspam':
+    elif dataset in ('enron', 'spamassassin', 'trec2007', 'lingspam'):
+        # spam: target = a spam test email, base = ham training emails (0 = ham, 1 = spam)
         target_label, base_label = 1, 0
     else:
         raise ValueError(f"Wrong dataset name: {dataset}!")

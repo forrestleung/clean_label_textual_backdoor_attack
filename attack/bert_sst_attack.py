@@ -3,8 +3,10 @@ this script containts the clean-label poison attack
 """
 import argparse
 import copy
+import json
 import os
 import pickle
+import random
 import sys
 import time
 from typing import Dict, List, Tuple, Union
@@ -39,6 +41,9 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 SEED=1024
 torch.manual_seed(SEED)
 torch.cuda.manual_seed(SEED)
+
+# Binary spam corpora: 0 = ham, 1 = spam (see data/preprocessing_report.md).
+SPAM_DATASETS = ('enron', 'spamassassin', 'trec2007', 'lingspam')
 
 
 def adjust_lr(optimizer):
@@ -462,11 +467,17 @@ def evaluate_clean_label_attack(poisoned_examples: Dict[int, List[Tuple[str, str
 
     # poison_num = int(len(clean_train_data) * poison_ratio)
     target_ids_num, num_target_corr, test_acc_sum = 0, 0, 0
+    skipped_targets = []
     clean_train_dataset, clean_dev_dataset, clean_test_dataset = BERTDataset(
         clean_train_data, tokenizer), BERTDataset(clean_dev_data, tokenizer), BERTDataset(clean_test_data, tokenizer)
-    
+
     for target_id, target_poisons in poisoned_examples.items():
         print("******************target idx %d********************" % target_id)
+        if len(target_poisons) == 0:
+            # Every candidate for this target failed the stealthiness filter, so there is nothing to train on.
+            print(f"No poison examples survived filtering for target {target_id}; skipping (counted as attack failure).")
+            skipped_targets.append(target_id)
+            continue
         target_save_path = os.path.join(save_path, str(target_id))
 
         # init poison model
@@ -507,13 +518,84 @@ def evaluate_clean_label_attack(poisoned_examples: Dict[int, List[Tuple[str, str
         print("out of %d num targets, %d got successfully attacked" % (target_ids_num, num_target_corr))
         print("Attack Success Rate is: %.4f, Average Clean Test Accuracy is: %.4f" % (num_target_corr/target_ids_num, test_acc_sum / target_ids_num))
 
+    total_targets = target_ids_num + len(skipped_targets)
     print('##############################')
-    print('Attack Success Rate is: %.4f' % (num_target_corr / target_ids_num))
+    if skipped_targets:
+        print(f"Targets with no poisons after filtering ({len(skipped_targets)}): {skipped_targets}")
+    if target_ids_num == 0:
+        print("No targets were attacked: every target had zero poisons after filtering. Loosen the filter thresholds.")
+        return
+    print('Attack Success Rate is: %.4f (%d/%d targets; targets with no poisons count as failures)' % (
+        num_target_corr / total_targets, num_target_corr, total_targets))
+    if skipped_targets:
+        print('Attack Success Rate over attacked targets only: %.4f (%d/%d)' % (
+            num_target_corr / target_ids_num, num_target_corr, target_ids_num))
     print('Average Clean Test Accuracy is: %.4f' % (test_acc_sum / target_ids_num))
 
-def load_poisoned_examples(poison_data_path: str, dataset: str, device: torch.device):
+
+def default_filter_thresholds(dataset: str):
+    """Return (ppl, bert_score, gerr) used by Gan et al. Spam returns None for ppl/gerr: computed from ham emails."""
+    #ppl: for sst: 200, olid: 800, ag: 400
+    #bert score: sst: 0.85, olid: 0.85, ag: 0.85
+    #gerr: for sst: 2.0 olid: 6.0 ag: No limit
+    if dataset == 'sst':
+        return 300, 0.8, 4
+    elif dataset == 'olid':
+        return 800, 0.85, 6.0
+    elif dataset == 'ag':
+        return 400, 0.85, 4.0
+    elif dataset in SPAM_DATASETS:
+        return None, 0.8, None
+    raise ValueError(f"Wrong dataset name: {dataset}!")
+
+
+def reference_thresholds(ref_texts: List[str], gpt_model: GPT2LM, tool, percentile: float, cache_path: str):
+    """PPL and grammar-error thresholds at `percentile` of genuine base-label (ham) training emails.
+
+    Spam text is noisy, so the fixed SST-2 thresholds would reject nearly every poison.
+    Instead, a poison is kept if it is no less fluent than `percentile`% of real ham emails.
+    """
+    if os.path.exists(cache_path):
+        with open(cache_path) as f:
+            cached = json.load(f)
+        if cached.get("percentile") == percentile and cached.get("ref_size") == len(ref_texts):
+            print(f"Loaded reference thresholds from {cache_path}: {cached}")
+            return cached["ppl"], cached["gerr"]
+
+    print(f"Computing reference PPL / grammar errors on {len(ref_texts)} ham training emails...")
+    ppls, gerrs = [], []
+    for text in tqdm(ref_texts):
+        text = process_string(text)
+        ppls.append(gpt_model(text))
+        gerrs.append(len(tool.check(text)))
+    ppl = round(float(np.nanpercentile(ppls, percentile)), 1)
+    gerr = float(np.percentile(gerrs, percentile))
+    stats = {"percentile": percentile, "ref_size": len(ref_texts), "ppl": ppl, "gerr": gerr,
+             "ppl_median": float(np.nanmedian(ppls)), "gerr_median": float(np.median(gerrs))}
+    print(f"Reference thresholds: {stats}")
+    with open(cache_path, "w") as f:
+        json.dump(stats, f, indent=2)
+    return ppl, gerr
+
+
+def load_poisoned_examples(poison_data_path: str, dataset: str, device: torch.device,
+                           clean_train_data: List[Tuple[str, int]] = None, base_label: int = None,
+                           ppl: float = None, bert_score: float = None, gerr: float = None,
+                           ref_percentile: float = 90, ref_size: int = 500):
     print("-"*30 + f"Load poison examples from {poison_data_path}." + "-"*30)
     poison_examples = pickle.load(open(poison_data_path, "rb"))
+    default_ppl, default_bs, default_gerr = default_filter_thresholds(dataset)
+    ppl = default_ppl if ppl is None else ppl
+    bert_score = default_bs if bert_score is None else bert_score
+    gerr = default_gerr if gerr is None else gerr
+
+    # Reuse an existing filtered file when the thresholds are fixed (the filter is the slow part).
+    if ppl is not None and gerr is not None:
+        filtered_path = poison_data_path + f'.filtered.ppl{ppl:g}.bs{bert_score:g}.gerr{gerr:g}'
+        if os.path.exists(filtered_path):
+            print(f"Loading cached filtered poisons from {filtered_path}")
+            return pickle.load(open(filtered_path, "rb"))
+
     # calculate bert score
     # calculate ppl
     tool = language_tool_python.LanguageTool('en-US')
@@ -526,35 +608,36 @@ def load_poisoned_examples(poison_data_path: str, dataset: str, device: torch.de
     #gpt_model = GPT2LM('/data/home/ganleilei/bert/gpt2', use_tf=False, device='cuda' if torch.cuda.is_available() else 'cpu')
     gpt_model = GPT2LM('gpt2', use_tf=False, device=device)
 
-    #ppl: for sst: 200, olid: 800, ag: 400
-    #bert score: sst: 0.85, olid: 0.85, ag: 0.85
-    #gerr: for sst: 2.0 olid: 6.0 ag: No limit
+    if ppl is None or gerr is None:
+        ref_texts = [text for text, label in clean_train_data if label == base_label]
+        ref_texts = random.Random(SEED).sample(ref_texts, min(ref_size, len(ref_texts)))
+        ref_ppl, ref_gerr = reference_thresholds(ref_texts, gpt_model, tool, ref_percentile,
+                                                 poison_data_path + f'.ref_thresholds.p{ref_percentile:g}.json')
+        ppl = ref_ppl if ppl is None else ppl
+        gerr = ref_gerr if gerr is None else gerr
+        filtered_path = poison_data_path + f'.filtered.ppl{ppl:g}.bs{bert_score:g}.gerr{gerr:g}'
+        if os.path.exists(filtered_path):
+            print(f"Loading cached filtered poisons from {filtered_path}")
+            return pickle.load(open(filtered_path, "rb"))
+    print(f"Filter thresholds: ppl <= {ppl}, BERTScore F1 >= {bert_score}, grammar errors <= {gerr}")
+
     filtered_poison_examples = {}
-    if dataset == 'sst':
-        ppl, bert_score, gerr = 300, 0.8, 4
-    elif dataset == 'olid':
-        ppl, bert_score, gerr = 800, 0.85, 6.0
-    elif dataset == 'ag':
-        ppl, bert_score, gerr = 400, 0.85, 4.0
-    else:
-        raise ValueError("Wrong dataset name.")
-    
     for test_idx, samples in poison_examples.items():
         filtered_samples = []
         for item in tqdm(samples[:1500]):
             generated_poison_sample = process_string(item[1])
             cur_ppl = gpt_model(generated_poison_sample)
-            if cur_ppl > ppl: continue
+            if not (cur_ppl <= ppl): continue  # also rejects NaN perplexities
             cur_gerr = len(tool.check(generated_poison_sample))
             if cur_gerr > gerr: continue
             (P, R, F), hash_tag = bert_scorer.score([item[0]], [generated_poison_sample], return_hash=True)
             if F < bert_score: continue
             filtered_samples.append(item)
-        
+
         print(f"test idx: {test_idx}, samples len: {len(samples)}, filtered samples len: {len(filtered_samples)}")
         filtered_poison_examples[test_idx] = filtered_samples
 
-    pickle.dump(filtered_poison_examples, open(poison_data_path + f'.filtered.ppl{ppl}.bs{bert_score}.gerr{gerr}', 'wb'))
+    pickle.dump(filtered_poison_examples, open(filtered_path, 'wb'))
     return filtered_poison_examples
 
 
@@ -566,9 +649,8 @@ def define_base_target_label(dataset):
         target_label, base_label = 3, 0 # 0: world, 3: sci/tech
     elif dataset == 'olid':
         target_label, base_label = 1, 0
-    elif dataset == 'enron':
-        target_label, base_label = 1, 0
-    elif dataset == 'lingspam':
+    elif dataset in SPAM_DATASETS:
+        # target = a spam test email, base = ham training emails; success = target classified as ham.
         target_label, base_label = 1, 0
     else:
         raise ValueError(f"Wrong dataset name: {dataset}!")
@@ -603,6 +685,13 @@ def main():
     parser.add_argument('--transfer_lr', default=1e-5, type=float)
     parser.add_argument('--training_strategy', default=1, type=int)
     parser.add_argument('--device', type=str, default='mps', help="torch device, e.g. mps, cuda:0, cpu.")
+    # Poison stealthiness filter. Unset = Gan et al.'s values (sst/olid/ag) or, for spam, PPL / grammar
+    # thresholds at --ref_percentile of real ham training emails.
+    parser.add_argument('--ppl_thresh', type=float, default=None, help="max GPT-2 perplexity of a kept poison")
+    parser.add_argument('--bertscore_thresh', type=float, default=None, help="min BERTScore F1 between base and poison")
+    parser.add_argument('--gerr_thresh', type=float, default=None, help="max LanguageTool errors of a kept poison")
+    parser.add_argument('--ref_percentile', type=float, default=90, help="percentile of ham emails used for spam thresholds")
+    parser.add_argument('--ref_size', type=int, default=500, help="number of ham emails used to compute spam thresholds")
 
     args = parser.parse_args()
     print(args)
@@ -644,11 +733,13 @@ def main():
     print("Test acc on clean model: %.4f" % test_acc)
 
     # Dict[int, List[Tuple[base_text, poison_text, diff, predicted_label]]]
-    poison_examples = load_poisoned_examples(poison_data_path, dataset, device)
+    _, base_label = define_base_target_label(dataset)
+    poison_examples = load_poisoned_examples(poison_data_path, dataset, device, clean_train_data, base_label,
+                                             args.ppl_thresh, args.bertscore_thresh, args.gerr_thresh,
+                                             args.ref_percentile, args.ref_size)
     # data poison attack
     poison_num = args.poison_num
     # poison_num = int(poison_ratio * len(clean_train_data))
-    _, base_label = define_base_target_label(dataset)
     save_path = f"{args.pre_model_name}_{dataset}_attack_num{poison_num}_{pre_model_name}_freeze_pmlp{poison_model_mlp_layer}_phdim{poison_model_mlp_dim}_{optimizer}_lr{lr}_bs{batch_size}_weight{weight_decay}"
     save_path = os.path.join(args.save_path, save_path)
     print(f"total clean train data size: {len(clean_train_data)}, poison number: {poison_num}")
