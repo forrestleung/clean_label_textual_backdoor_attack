@@ -106,7 +106,7 @@ def dump_semantic_feature(clean_model, tokenizer, training_set, target_set, devi
     test_global_idx, training_global_idx = 0, 0
 
     with torch.no_grad():
-        for target_text, target_attention_mask, target_label in tqdm(target_set):
+        for target_text, target_attention_mask, target_label in tqdm(target_set, leave=False):
             target_text = target_text.to(device)
             target_attention_mask = target_attention_mask.to(device)
             _, target_cls_output = clean_model(target_text, target_attention_mask)
@@ -118,7 +118,7 @@ def dump_semantic_feature(clean_model, tokenizer, training_set, target_set, devi
                                                                         target_text, target_label[idx], None, target_cls[idx]) 
                 test_global_idx  += 1
 
-        for base_text, base_attention_mask, base_label in tqdm(training_set):
+        for base_text, base_attention_mask, base_label in tqdm(training_set, leave=False):
             base_text = base_text.to(device)
             base_attention_mask = base_attention_mask.to(device)
             _, base_cls_output = clean_model(base_text, base_attention_mask)
@@ -175,7 +175,7 @@ def find_closest_base_example(target_example: FeatureSpaceObj, base_feature_spac
 # do not attack examples which have duplicate in the training dataset
 def is_duplicate(test_example: str, training_dataset: Dict[int, FeatureSpaceObj]):
     duplicate = False
-    for idx, featuer in tqdm(training_dataset.items()):
+    for idx, featuer in tqdm(training_dataset.items(), leave=False):
         edit_dis, edit_sign = compute_longest_common_distance(test_example, featuer.text)
         edit_ratio = edit_dis / len(test_example.split(" ")) if edit_sign == 1 else edit_dis/len(featuer.text.split(" "))
         if edit_ratio > 0.6:
@@ -405,6 +405,14 @@ def main():
 
 
 if __name__ == '__main__':
-
-    
-    main()
+    import datetime
+    _start = time.time()
+    print(f"Run started at {time.strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
+    _status = "failed"
+    try:
+        main()
+        _status = "finished"
+    finally:
+        _elapsed = time.time() - _start
+        print(f"Run {_status} at {time.strftime('%Y-%m-%d %H:%M:%S')}, total time "
+              f"{datetime.timedelta(seconds=round(_elapsed))} ({_elapsed:.0f}s)", flush=True)
