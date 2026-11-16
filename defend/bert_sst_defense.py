@@ -545,5 +545,14 @@ def main():
         raise ValueError("Wrong defense method!")
     
 if __name__ == '__main__':
-    
-    main()
+    import datetime
+    _start = time.time()
+    print(f"Run started at {time.strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
+    _status = "failed"
+    try:
+        main()
+        _status = "finished"
+    finally:
+        _elapsed = time.time() - _start
+        print(f"Run {_status} at {time.strftime('%Y-%m-%d %H:%M:%S')}, total time "
+              f"{datetime.timedelta(seconds=round(_elapsed))} ({_elapsed:.0f}s)", flush=True)
