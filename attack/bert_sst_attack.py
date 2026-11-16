@@ -9,6 +9,7 @@ import pickle
 import random
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Tuple, Union
 
 #sys.path.append("/home/ganleilei/workspace/clean_label_textual_backdoor_attack")
@@ -549,11 +550,13 @@ def default_filter_thresholds(dataset: str):
     raise ValueError(f"Wrong dataset name: {dataset}!")
 
 
-def reference_thresholds(ref_texts: List[str], gpt_model: GPT2LM, tool, percentile: float, cache_path: str):
+def reference_thresholds(ref_texts: List[str], gpt_model: GPT2LM, tool, percentile: float, cache_path: str,
+                         grammar_pool: ThreadPoolExecutor = None):
     """PPL and grammar-error thresholds at `percentile` of genuine base-label (ham) training emails.
 
     Spam text is noisy, so the fixed SST-2 thresholds would reject nearly every poison.
     Instead, a poison is kept if it is no less fluent than `percentile`% of real ham emails.
+    With `grammar_pool`, the LanguageTool checks run in its threads while GPT-2 scores the next email.
     """
     if os.path.exists(cache_path):
         with open(cache_path) as f:
@@ -564,10 +567,18 @@ def reference_thresholds(ref_texts: List[str], gpt_model: GPT2LM, tool, percenti
 
     print(f"Computing reference PPL / grammar errors on {len(ref_texts)} ham training emails...")
     ppls, gerrs = [], []
-    for text in tqdm(ref_texts):
-        text = process_string(text)
-        ppls.append(gpt_model(text))
-        gerrs.append(len(tool.check(text)))
+    if grammar_pool is None:
+        for text in tqdm(ref_texts):
+            text = process_string(text)
+            ppls.append(gpt_model(text))
+            gerrs.append(len(tool.check(text)))
+    else:
+        grammar_futures = []
+        for text in tqdm(ref_texts):
+            text = process_string(text)
+            grammar_futures.append(grammar_pool.submit(tool.check, text))
+            ppls.append(gpt_model(text))
+        gerrs = [len(future.result()) for future in tqdm(grammar_futures, desc="grammar", leave=False)]
     ppl = round(float(np.nanpercentile(ppls, percentile)), 1)
     gerr = float(np.percentile(gerrs, percentile))
     stats = {"percentile": percentile, "ref_size": len(ref_texts), "ppl": ppl, "gerr": gerr,
@@ -581,7 +592,8 @@ def reference_thresholds(ref_texts: List[str], gpt_model: GPT2LM, tool, percenti
 def load_poisoned_examples(poison_data_path: str, dataset: str, device: torch.device,
                            clean_train_data: List[Tuple[str, int]] = None, base_label: int = None,
                            ppl: float = None, bert_score: float = None, gerr: float = None,
-                           ref_percentile: float = 90, ref_size: int = 500):
+                           ref_percentile: float = 90, ref_size: int = 500,
+                           parallel_grammar: bool = True, grammar_workers: int = 8):
     print("-"*30 + f"Load poison examples from {poison_data_path}." + "-"*30)
     poison_examples = pickle.load(open(poison_data_path, "rb"))
     default_ppl, default_bs, default_gerr = default_filter_thresholds(dataset)
@@ -608,31 +620,66 @@ def load_poisoned_examples(poison_data_path: str, dataset: str, device: torch.de
     #gpt_model = GPT2LM('/data/home/ganleilei/bert/gpt2', use_tf=False, device='cuda' if torch.cuda.is_available() else 'cpu')
     gpt_model = GPT2LM('gpt2', use_tf=False, device=device)
 
+    # LanguageTool runs on the CPU in a separate Java server, and each check is an independent HTTP request,
+    # so several checks can run at once while GPT-2 keeps scoring on the GPU. Results and their order are
+    # identical to the sequential path (parallel_grammar=False), which is the original code.
+    grammar_pool = ThreadPoolExecutor(max_workers=grammar_workers) if parallel_grammar else None
+    try:
+        return _filter_poisoned_examples(poison_examples, poison_data_path, gpt_model, tool, bert_scorer,
+                                         clean_train_data, base_label, ppl, bert_score, gerr,
+                                         ref_percentile, ref_size, grammar_pool)
+    finally:
+        if grammar_pool is not None:
+            grammar_pool.shutdown(wait=True, cancel_futures=True)
+
+
+def _filter_poisoned_examples(poison_examples, poison_data_path, gpt_model, tool, bert_scorer,
+                              clean_train_data, base_label, ppl, bert_score, gerr,
+                              ref_percentile, ref_size, grammar_pool):
     if ppl is None or gerr is None:
         ref_texts = [text for text, label in clean_train_data if label == base_label]
         ref_texts = random.Random(SEED).sample(ref_texts, min(ref_size, len(ref_texts)))
         ref_ppl, ref_gerr = reference_thresholds(ref_texts, gpt_model, tool, ref_percentile,
-                                                 poison_data_path + f'.ref_thresholds.p{ref_percentile:g}.json')
+                                                 poison_data_path + f'.ref_thresholds.p{ref_percentile:g}.json',
+                                                 grammar_pool)
         ppl = ref_ppl if ppl is None else ppl
         gerr = ref_gerr if gerr is None else gerr
-        filtered_path = poison_data_path + f'.filtered.ppl{ppl:g}.bs{bert_score:g}.gerr{gerr:g}'
-        if os.path.exists(filtered_path):
-            print(f"Loading cached filtered poisons from {filtered_path}")
-            return pickle.load(open(filtered_path, "rb"))
+    # Built here for both fixed and data-derived thresholds (fixed ones, e.g. SST, never enter the branch above).
+    filtered_path = poison_data_path + f'.filtered.ppl{ppl:g}.bs{bert_score:g}.gerr{gerr:g}'
+    if os.path.exists(filtered_path):
+        print(f"Loading cached filtered poisons from {filtered_path}")
+        return pickle.load(open(filtered_path, "rb"))
     print(f"Filter thresholds: ppl <= {ppl}, BERTScore F1 >= {bert_score}, grammar errors <= {gerr}")
 
     filtered_poison_examples = {}
     for test_idx, samples in poison_examples.items():
         filtered_samples = []
-        for item in tqdm(samples[:1500]):
-            generated_poison_sample = process_string(item[1])
-            cur_ppl = gpt_model(generated_poison_sample)
-            if not (cur_ppl <= ppl): continue  # also rejects NaN perplexities
-            cur_gerr = len(tool.check(generated_poison_sample))
-            if cur_gerr > gerr: continue
-            (P, R, F), hash_tag = bert_scorer.score([item[0]], [generated_poison_sample], return_hash=True)
-            if F < bert_score: continue
-            filtered_samples.append(item)
+        if grammar_pool is None:
+            for item in tqdm(samples[:1500]):
+                generated_poison_sample = process_string(item[1])
+                cur_ppl = gpt_model(generated_poison_sample)
+                if not (cur_ppl <= ppl): continue  # also rejects NaN perplexities
+                cur_gerr = len(tool.check(generated_poison_sample))
+                if cur_gerr > gerr: continue
+                (P, R, F), hash_tag = bert_scorer.score([item[0]], [generated_poison_sample], return_hash=True)
+                if F < bert_score: continue
+                filtered_samples.append(item)
+        else:
+            # Same checks in the same order per candidate: grammar only for PPL survivors, BERTScore only for
+            # grammar survivors. Grammar checks run in the pool while GPT-2 scores the following candidates.
+            ppl_survivors = []  # (item, processed text, grammar future), in candidate order
+            for item in tqdm(samples[:1500]):
+                generated_poison_sample = process_string(item[1])
+                cur_ppl = gpt_model(generated_poison_sample)
+                if not (cur_ppl <= ppl): continue  # also rejects NaN perplexities
+                ppl_survivors.append((item, generated_poison_sample,
+                                      grammar_pool.submit(tool.check, generated_poison_sample)))
+            for item, generated_poison_sample, grammar_future in tqdm(ppl_survivors, desc="grammar+bertscore", leave=False):
+                cur_gerr = len(grammar_future.result())
+                if cur_gerr > gerr: continue
+                (P, R, F), hash_tag = bert_scorer.score([item[0]], [generated_poison_sample], return_hash=True)
+                if F < bert_score: continue
+                filtered_samples.append(item)
 
         print(f"test idx: {test_idx}, samples len: {len(samples)}, filtered samples len: {len(filtered_samples)}")
         filtered_poison_examples[test_idx] = filtered_samples
@@ -694,6 +741,10 @@ def main():
     parser.add_argument('--gerr_thresh', type=float, default=None, help="max LanguageTool errors of a kept poison")
     parser.add_argument('--ref_percentile', type=float, default=90, help="percentile of ham emails used for spam thresholds")
     parser.add_argument('--ref_size', type=int, default=500, help="number of ham emails used to compute spam thresholds")
+    parser.add_argument('--parallel_grammar', action=argparse.BooleanOptionalAction, default=True,
+                        help="run LanguageTool grammar checks in a thread pool while GPT-2 scores the next poison "
+                             "(same results; --no-parallel_grammar runs them one at a time)")
+    parser.add_argument('--grammar_workers', type=int, default=8, help="threads for --parallel_grammar")
 
     args = parser.parse_args()
     print(args)
@@ -738,7 +789,8 @@ def main():
     _, base_label = define_base_target_label(dataset)
     poison_examples = load_poisoned_examples(poison_data_path, dataset, device, clean_train_data, base_label,
                                              args.ppl_thresh, args.bertscore_thresh, args.gerr_thresh,
-                                             args.ref_percentile, args.ref_size)
+                                             args.ref_percentile, args.ref_size,
+                                             args.parallel_grammar, args.grammar_workers)
     # data poison attack
     poison_num = args.poison_num
     # poison_num = int(poison_ratio * len(clean_train_data))
@@ -751,5 +803,14 @@ def main():
 
 
 if __name__ == '__main__':
-    
-    main()
+    import datetime
+    _start = time.time()
+    print(f"Run started at {time.strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
+    _status = "failed"
+    try:
+        main()
+        _status = "finished"
+    finally:
+        _elapsed = time.time() - _start
+        print(f"Run {_status} at {time.strftime('%Y-%m-%d %H:%M:%S')}, total time "
+              f"{datetime.timedelta(seconds=round(_elapsed))} ({_elapsed:.0f}s)", flush=True)
