@@ -1,6 +1,6 @@
 #!/bin/bash
-# Usage: scripts/run_bert_ag_clean.sh [device]   (default: mps; e.g. cuda:0, cpu)
-DEVICE=${1:-mps}
+# Usage: scripts/run_bert_ag_clean.sh [device]   (default: cuda:0; e.g. cuda:1, mps, cpu)
+DEVICE=${1:-cuda:0}
  python attack/train_bert_sst_clean.py \
  --device "$DEVICE" \
  --data ag \
