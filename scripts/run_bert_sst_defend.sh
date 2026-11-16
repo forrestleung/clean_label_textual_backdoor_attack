@@ -1,9 +1,9 @@
 #!/bin/bash
 # ONION defense against the SST-2 backdoor (reproduces Gan et al. Table 5, ONION column).
-# Usage: bash scripts/run_bert_sst_defend.sh [device]   (default: mps; e.g. cuda:0, cpu)
+# Usage: bash scripts/run_bert_sst_defend.sh [device]   (default: cuda:0; e.g. cuda:1, mps, cpu)
 # Env overrides: POISON_NUM (default 40), DEFENSE (ONION|BT|SCPN).
 set -euo pipefail
-DEVICE=${1:-mps}
+DEVICE=${1:-cuda:0}
 POISON_NUM=${POISON_NUM:-40}
 DEFENSE=${DEFENSE:-ONION}
 export PYTORCH_ENABLE_MPS_FALLBACK=1
@@ -35,4 +35,5 @@ python defend/bert_sst_defense.py \
     --poison_model_mlp_num 1 \
     --poison_model_mlp_dim 1024 \
     --defense_method "$DEFENSE" \
+    --max_length 512 \
     --device "$DEVICE" 2>&1 | tee logs/sst/defend_${DEFENSE}_poison${POISON_NUM}.log
